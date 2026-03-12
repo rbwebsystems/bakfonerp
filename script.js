@@ -4242,6 +4242,49 @@ function renderAll() {
   byId("st-debts").innerText = money(debtorSum);
   byId("st-creditor").innerText = money(creditorSum);
   byId("st-cash").innerText = money(totalsAll.balance);
+
+  // Dashboard charts: son 6 ay satış
+  const monthNamesAz = ["Yan", "Fev", "Mar", "Apr", "May", "İyn", "İyl", "Avq", "Sen", "Okt", "Noy", "Dek"];
+  const now = new Date();
+  const last6 = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    last6.push({ key: `${y}-${m}`, label: `${monthNamesAz[d.getMonth()]} ${y}` });
+  }
+  const salesByMonth = last6.map(({ key }) => {
+    const sum = (db.sales || [])
+      .filter((s) => !s.returnedAt && inMonth(s.date, key))
+      .reduce((a, s) => a + n(s.amount), 0);
+    return sum;
+  });
+  const maxSales = Math.max(1, ...salesByMonth);
+  const salesChartEl = byId("dashChartSales");
+  if (salesChartEl) {
+    salesChartEl.innerHTML = last6
+      .map(({ label }, i) => {
+        const val = salesByMonth[i];
+        const pct = maxSales ? (val / maxSales) * 100 : 0;
+        return `<div class="dash-bar-row"><span class="dash-bar-label">${escapeHtml(label)}</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pct}%"></div><span class="dash-bar-value">${money(val)}</span></div></div>`;
+      })
+      .join("");
+  }
+
+  // Alış vs Satış (bu ay)
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const purchThisMonth = (db.purch || []).filter((p) => inMonth(p.date, currentMonthKey)).reduce((a, p) => a + n(p.amount), 0);
+  const salesThisMonth = (db.sales || []).filter((s) => !s.returnedAt && inMonth(s.date, currentMonthKey)).reduce((a, s) => a + n(s.amount), 0);
+  const maxPVS = Math.max(1, purchThisMonth, salesThisMonth);
+  const pctPurch = (purchThisMonth / maxPVS) * 100;
+  const pctSales = (salesThisMonth / maxPVS) * 100;
+  const pvsEl = byId("dashChartPurchVsSales");
+  if (pvsEl) {
+    pvsEl.innerHTML = `
+      <div class="dash-bar-row"><span class="dash-bar-label">Alış</span><div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill-purch" style="width:${pctPurch}%"></div><span class="dash-bar-value">${money(purchThisMonth)} AZN</span></div></div>
+      <div class="dash-bar-row"><span class="dash-bar-label">Satış</span><div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill-sales" style="width:${pctSales}%"></div><span class="dash-bar-value">${money(salesThisMonth)} AZN</span></div></div>
+    `;
+  }
 }
 
 function delItem(type, i) {
