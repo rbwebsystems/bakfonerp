@@ -4285,6 +4285,43 @@ function renderAll() {
       <div class="dash-bar-row"><span class="dash-bar-label">Satış</span><div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill-sales" style="width:${pctSales}%"></div><span class="dash-bar-value">${money(salesThisMonth)} AZN</span></div></div>
     `;
   }
+
+  // Son 6 ay alış (AZN)
+  const purchByMonth = last6.map(({ key }) => (db.purch || []).filter((p) => inMonth(p.date, key)).reduce((a, p) => a + n(p.amount), 0));
+  const maxPurch = Math.max(1, ...purchByMonth);
+  const purchChartEl = byId("dashChartPurch");
+  if (purchChartEl) {
+    purchChartEl.innerHTML = last6
+      .map(({ label }, i) => {
+        const val = purchByMonth[i];
+        const pct = maxPurch ? (val / maxPurch) * 100 : 0;
+        return `<div class="dash-bar-row"><span class="dash-bar-label">${escapeHtml(label)}</span><div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill-purch" style="width:${pct}%"></div><span class="dash-bar-value">${money(val)}</span></div></div>`;
+      })
+      .join("");
+  }
+
+  // Debitor vs Kreditor borclar
+  const maxDebt = Math.max(1, debtorSum, creditorSum);
+  const pctDebt = (debtorSum / maxDebt) * 100;
+  const pctCred = (creditorSum / maxDebt) * 100;
+  const debtCredEl = byId("dashChartDebtVsCredit");
+  if (debtCredEl) {
+    debtCredEl.innerHTML = `
+      <div class="dash-bar-row"><span class="dash-bar-label">Debitor</span><div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill-debt" style="width:${pctDebt}%"></div><span class="dash-bar-value">${money(debtorSum)} AZN</span></div></div>
+      <div class="dash-bar-row"><span class="dash-bar-label">Kreditor</span><div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill-credit" style="width:${pctCred}%"></div><span class="dash-bar-value">${money(creditorSum)} AZN</span></div></div>
+    `;
+  }
+
+  // Aşağı statistik sətiri: bu il cəmi, anbar sayı
+  const yearStart = `${now.getFullYear()}-01-01`;
+  const salesYear = (db.sales || []).filter((s) => !s.returnedAt && String((s.date || "").slice(0, 10)) >= yearStart).reduce((a, s) => a + n(s.amount), 0);
+  const purchYear = (db.purch || []).filter((p) => String((p.date || "").slice(0, 10)) >= yearStart).reduce((a, p) => a + n(p.amount), 0);
+  const salesYearEl = byId("dashStatSalesYear");
+  if (salesYearEl) salesYearEl.textContent = money(salesYear);
+  const purchYearEl = byId("dashStatPurchYear");
+  if (purchYearEl) purchYearEl.textContent = money(purchYear);
+  const stockCountEl = byId("dashStatStockCount");
+  if (stockCountEl) stockCountEl.textContent = String(stockCount);
 }
 
 function delItem(type, i) {

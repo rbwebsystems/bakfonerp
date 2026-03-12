@@ -435,7 +435,13 @@ th:last-child,td:last-child{border-right:none;width:140px;text-align:center;whit
 .dash-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),#059669);border-radius:8px;transition:width .4s ease;min-width:0;}
 .dash-bar-fill-purch{background:linear-gradient(90deg,#0ea5e9,#0284c7);}
 .dash-bar-fill-sales{background:linear-gradient(90deg,var(--accent),#059669);}
+.dash-bar-fill-debt{background:linear-gradient(90deg,#8b5cf6,#6d28d9);}
+.dash-bar-fill-credit{background:linear-gradient(90deg,#f59e0b,#d97706);}
 .dash-bar-value{position:absolute;right:10px;font-size:.8rem;font-weight:700;color:var(--text-main);z-index:1;text-shadow:0 0 2px #fff;}
+.dash-stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:24px;}
+.dash-stat-mini{padding:18px;display:flex;flex-direction:column;gap:6px;border-left:4px solid var(--accent);}
+.dash-stat-mini-label{font-size:.8rem;color:var(--text-muted);}
+.dash-stat-mini-value{font-size:1.5rem;font-weight:800;color:var(--accent);}
 
 tr.total-row{background:var(--accent-light);border-top:2px solid var(--accent);}
 tr.total-row td{padding:10px 12px;}
