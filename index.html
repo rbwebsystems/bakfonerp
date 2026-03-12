@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bakfon ERP</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="appShell">
+  <aside>
+    <div class="logo">BAKFON ERP</div>
+    <nav>
+      <div class="nav-link active" onclick="showSec('dash', this)"><i class="fas fa-th-large"></i> Dashboard</div>
+      <div class="nav-link" onclick="showSec('cust', this)"><i class="fas fa-users"></i> Müştərilər</div>
+      <div class="nav-link" onclick="showSec('prod', this)"><i class="fas fa-tags"></i> Məhsullar</div>
+      <div class="nav-link" onclick="showSec('supp', this)"><i class="fas fa-truck"></i> Təchizatçılar</div>
+      <div class="nav-link" onclick="showSec('purch', this)"><i class="fas fa-shopping-cart"></i> Alışlar</div>
+      <div class="nav-link" onclick="showSec('stock', this)"><i class="fas fa-boxes"></i> Anbar</div>
+      <div class="nav-link" onclick="showSec('sales', this)"><i class="fas fa-receipt"></i> Satışlar</div>
+      <div class="nav-sep"></div>
+      <div class="nav-link" onclick="showSec('staff', this)"><i class="fas fa-user-tie"></i> Əməkdaşlar</div>
+      <div class="nav-link" onclick="showSec('debts', this)"><i class="fas fa-hand-holding-dollar"></i> Debitor borclar</div>
+      <div class="nav-link" onclick="showSec('creditor', this)"><i class="fas fa-file-invoice-dollar"></i> Kreditor borclar</div>
+      <div class="nav-link" onclick="showSec('cash', this)"><i class="fas fa-cash-register"></i> Kassa</div>
+      <div class="nav-link" onclick="showSec('accounts', this)"><i class="fas fa-building-columns"></i> Hesablar</div>
+      <div class="nav-link dev-only dev-toggle" onclick="toggleDevMenu()"><i class="fas fa-user-gear"></i> Developer <span class="dev-caret"><i class="fas fa-chevron-down"></i></span></div>
+      <div id="devMenu" class="dev-only dev-menu" style="display:none;">
+        <div class="nav-link dev-sub" onclick="showSec('companies', this)"><i class="fas fa-city"></i> Şirkətlər</div>
+        <div class="nav-link dev-sub" onclick="showSec('users', this)"><i class="fas fa-user-shield"></i> İstifadəçilər</div>
+        <div class="nav-link dev-sub" onclick="showSec('audit', this)"><i class="fas fa-clipboard-list"></i> Audit</div>
+        <div class="nav-link dev-sub" onclick="showSec('trash', this)"><i class="fas fa-trash-can"></i> Səbət</div>
+        <div class="nav-link dev-sub" onclick="showSec('tools', this)"><i class="fas fa-screwdriver-wrench"></i> Alətlər</div>
+      </div>
+      <div class="nav-link" onclick="showSec('reports', this)"><i class="fas fa-chart-line"></i> Hesabatlar</div>
+    </nav>
+  </aside>
+
+  <div class="main-area">
+    <header class="app-header">
+      <div class="app-header-left">
+        <span class="app-header-title" id="appHeaderTitle">Dashboard</span>
+      </div>
+      <div class="app-header-right">
+        <span id="lastSavedEl" class="last-saved" title="Son saxlanma vaxtı"></span>
+        <button class="header-btn" type="button" onclick="openGlobalSearch()" title="Axtarış (Ctrl+K)">
+          <i class="fas fa-magnifying-glass"></i><span>Axtarış</span>
+        </button>
+        <button class="header-btn" type="button" onclick="openProfile()" title="Profil">
+          <i class="fas fa-user"></i><span>Profil</span>
+        </button>
+      </div>
+    </header>
+  <main>
+    <div id="dash" class="section active">
+      <div class="content-header"><h1>Xülasə</h1></div>
+      <div class="stats-grid">
+        <div class="card stat-card"><small>Müştəri</small><h2 id="st-cust">0</h2></div>
+        <div class="card stat-card"><small>Anbarda</small><h2 id="st-stock">0</h2></div>
+        <div class="card stat-card"><small>Debitor borc (AZN)</small><h2 id="st-debts">0.00</h2></div>
+        <div class="card stat-card"><small>Kreditor borc (AZN)</small><h2 id="st-creditor">0.00</h2></div>
+        <div class="card stat-card"><small>Kassa qalığı (Nəğd)</small><h2 id="st-cash">0.00</h2></div>
+      </div>
+    </div>
+
+    <div id="cust" class="section">
+      <div class="content-header">
+        <h1>Müştərilər</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="custFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="custTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblCust', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openCust()"><i class="fas fa-plus"></i> Yeni Müştəri</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>ID</th><th>Ad Soyad Ata</th><th>Mobil</th><th>FİN</th><th>Seriya №</th><th>Zamin</th><th>Əməliyyat</th></tr>
+          </thead>
+          <tbody id="tblCust"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="supp" class="section">
+      <div class="content-header">
+        <h1>Təchizatçılar</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="suppFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="suppTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblSupp', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openSupp()"><i class="fas fa-plus"></i> Yeni Təchizatçı</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>ID</th><th>Şirkət</th><th>Məsul</th><th>Mobil</th><th>VÖEN</th><th>Əməliyyat</th></tr>
+          </thead>
+          <tbody id="tblSupp"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="prod" class="section">
+      <div class="content-header">
+        <h1>Məhsullar</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="prodFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="prodTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblProd', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openProd()"><i class="fas fa-plus"></i> Yeni Məhsul</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Ad</th><th>Kateqoriya</th><th>Alt kateqoriya</th><th>Əməliyyat</th></tr>
+          </thead>
+          <tbody id="tblProd"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="purch" class="section">
+      <div class="content-header">
+        <h1>Alışlar</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="purchFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="purchTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblPurch', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openPurch()"><i class="fas fa-cart-plus"></i> Yeni Alış</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Qaimə</th><th>Tarix</th><th>Təchizatçı</th><th>Məhsul</th><th>Kod</th><th>Say</th><th>IMEI 1</th><th>IMEI 2</th><th>Seriya №</th><th>Məbləğ</th><th>Ödənilən</th><th>Qalıq</th><th>Əməliyyat</th></tr>
+          </thead>
+          <tbody id="tblPurch"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" class="btn-pager" onclick="pagePrev('purch')">Prev</button>
+        <span id="purchPageInfo" class="pager-info"></span>
+        <button type="button" class="btn-pager" onclick="pageNext('purch')">Next</button>
+        <div class="pager-size-wrap">
+          <select id="purchPageSize" class="select-tiny" onchange="renderAll()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="stock" class="section">
+      <div class="content-header">
+        <h1>Anbar</h1>
+        <div class="header-actions">
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblStock', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Status</th><th>Alış tarixi</th><th>Təchizatçı</th><th>Məhsul</th><th>Kod</th><th>Qalıq say</th><th>IMEI 1</th><th>IMEI 2</th><th>Seriya №</th><th>Qiymət</th></tr>
+          </thead>
+          <tbody id="tblStock"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="sales" class="section">
+      <div class="content-header">
+        <h1>Satışlar</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="salesFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="salesTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="IMEI / Seriya ilə axtar..." onkeyup="filterTable('tblSales', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openSale()"><i class="fas fa-cash-register"></i> Yeni Satış</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Qaimə</th><th>Tarix</th><th>Müştəri</th><th>Məhsul</th><th>Kod</th><th>Say</th><th>IMEI 1</th><th>IMEI 2</th><th>Seriya №</th><th>Növ</th><th>Əməkdaş</th><th>Məbləğ</th><th>Ödənilən</th><th>Qalıq</th><th>Əməliyyat</th></tr>
+          </thead>
+          <tbody id="tblSales"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" class="btn-pager" onclick="pagePrev('sales')">Prev</button>
+        <span id="salesPageInfo" class="pager-info"></span>
+        <button type="button" class="btn-pager" onclick="pageNext('sales')">Next</button>
+        <div class="pager-size-wrap">
+          <select id="salesPageSize" class="select-tiny" onchange="renderAll()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="staff" class="section">
+      <div class="content-header">
+        <h1>Əməkdaşlar</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="staffFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="staffTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblStaff', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openStaffPayrollCalc()"><i class="fas fa-calculator"></i> Əməkhaqqı hesabla</button>
+          <button class="btn-main" type="button" onclick="openStaffPay()"><i class="fas fa-money-bill-wave"></i> Ödə</button>
+          <button class="btn-main" type="button" onclick="openStaff()"><i class="fas fa-plus"></i> Yeni Əməkdaş</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>ID</th><th>Ad Soyad</th><th>Vəzifə</th><th>Telefon</th><th>Standart maaş</th><th>Faiz %</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblStaff"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="debts" class="section">
+      <div class="content-header">
+        <h1>Debitor borclar</h1>
+        <div class="header-actions">
+          <select id="debtsStatus" class="select-small" onchange="renderAll()">
+            <option value="all">Hamısı</option>
+            <option value="paid">Tam ödənilmiş</option>
+            <option value="partial">Qismən</option>
+            <option value="unpaid">Ödənilməmiş</option>
+          </select>
+          <div class="date-range">
+            <input type="date" id="debtsFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="debtsTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" id="srcDebts" placeholder="Axtar..." onkeyup="filterDebts()">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <div class="search-container">
+            <input type="text" id="srcCreditOnly" placeholder="Yalnız kredit (IMEI/Seriya)" onkeyup="filterCreditOnly()">
+            <button class="search-btn" type="button"><i class="fas fa-magnifying-glass"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Müştəri</th><th>Cəmi borc</th><th>Ödənilən</th><th>Qalıq</th><th>Status</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblDebts"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" class="btn-pager" onclick="pagePrev('debts')">Prev</button>
+        <span id="debtsPageInfo" class="pager-info"></span>
+        <button type="button" class="btn-pager" onclick="pageNext('debts')">Next</button>
+        <div class="pager-size-wrap">
+          <select id="debtsPageSize" class="select-tiny" onchange="renderAll()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="creditor" class="section">
+      <div class="content-header">
+        <h1>Kreditor borclar</h1>
+        <div class="header-actions">
+          <select id="credStatus" class="select-small" onchange="renderAll()">
+            <option value="open" selected>Ödənilməmiş / Qismən</option>
+            <option value="all">Hamısı</option>
+            <option value="paid">Tam ödənilmiş</option>
+            <option value="partial">Qismən</option>
+            <option value="unpaid">Ödənilməmiş</option>
+          </select>
+          <div class="date-range">
+            <input type="date" id="credFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="credTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" id="srcCred" placeholder="Axtar..." onkeyup="filterCreditor()">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Təchizatçı</th><th>Məbləğ</th><th>Ödənilən</th><th>Qalıq</th><th>Status</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblCreditor"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" class="btn-pager" onclick="pagePrev('cred')">Prev</button>
+        <span id="credPageInfo" class="pager-info"></span>
+        <button type="button" class="btn-pager" onclick="pageNext('cred')">Next</button>
+        <div class="pager-size-wrap">
+          <select id="credPageSize" class="select-tiny" onchange="renderAll()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="cash" class="section">
+      <div class="content-header">
+        <h1>Kassa</h1>
+        <div class="header-actions">
+          <select id="cashAccount" class="select-small" onchange="renderAll()"></select>
+          <select id="cashType" class="select-small" onchange="renderAll()">
+            <option value="all" selected>Hamısı</option>
+            <option value="in">Mədaxil</option>
+            <option value="out">Məxaric</option>
+          </select>
+          <div class="date-range">
+            <input type="date" id="cashFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="cashTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblCash', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-main" type="button" onclick="openCashOp()"><i class="fas fa-plus"></i> Yeni əməliyyat</button>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="card stat-card"><small>Gəlir (Nəğd)</small><h2 id="cashIn">0.00</h2></div>
+        <div class="card stat-card"><small>Xərc (Nəğd)</small><h2 id="cashOut">0.00</h2></div>
+        <div class="card stat-card"><small>Qalıq (Nəğd)</small><h2 id="cashBal">0.00</h2></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <table>
+          <thead><tr><th>#</th><th>Tip</th><th>Tarix</th><th>Mənbə</th><th>Məbləğ</th><th>Qeyd</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblCash"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" class="btn-pager" onclick="pagePrev('cash')">Prev</button>
+        <span id="cashPageInfo" class="pager-info"></span>
+        <button type="button" class="btn-pager" onclick="pageNext('cash')">Next</button>
+        <div class="pager-size-wrap">
+          <select id="cashPageSize" class="select-tiny" onchange="renderAll()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="150">150</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="accounts" class="section">
+      <div class="content-header">
+        <h1>Hesablar</h1>
+        <div class="header-actions">
+          <button class="btn-main" type="button" onclick="openAccount()"><i class="fas fa-plus"></i> Yeni hesab</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Ad</th><th>Tip</th><th>Balans</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblAccounts"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="companies" class="section">
+      <div class="content-header">
+        <h1>Şirkətlər</h1>
+        <div class="header-actions">
+          <button class="btn-main" type="button" onclick="openCompany()"><i class="fas fa-plus"></i> Yeni şirkət</button>
+          <button class="btn-cancel" type="button" onclick="resetCompanyData()"><i class="fas fa-rotate"></i> Şirkəti sıfırla</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Ad</th><th>Kod</th><th>Aktiv</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblCompanies"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="users" class="section">
+      <div class="content-header">
+        <h1>İstifadəçilər</h1>
+        <div class="header-actions">
+          <button class="btn-main" type="button" onclick="openUser()"><i class="fas fa-user-plus"></i> Yeni istifadəçi</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Ad Soyad</th><th>İstifadəçi adı</th><th>Əməkdaş</th><th>Rol</th><th>Aktiv</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblUsers"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="audit" class="section">
+      <div class="content-header">
+        <h1>Audit</h1>
+        <div class="header-actions">
+          <div class="date-range">
+            <input type="date" id="auditFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="auditTo" onchange="renderAll()">
+          </div>
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblAudit', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-cancel" type="button" onclick="clearAudit()"><i class="fas fa-broom"></i> Təmizlə</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Tarix</th><th>İstifadəçi</th><th>Əməliyyat</th><th>Hədəf</th><th>Detallı</th></tr></thead>
+          <tbody id="tblAudit"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="trash" class="section">
+      <div class="content-header">
+        <h1>Səbət</h1>
+        <div class="header-actions">
+          <div class="search-container">
+            <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblTrash', this.value)">
+            <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
+          </div>
+          <button class="btn-cancel" type="button" onclick="emptyTrash()"><i class="fas fa-trash-can"></i> Hamısını sil</button>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>#</th><th>Tarix</th><th>Tip</th><th>Ad</th><th>Silən</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblTrash"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tools" class="section">
+      <div class="content-header">
+        <h1>Alətlər</h1>
+        <div class="header-actions">
+          <button class="btn-main" type="button" onclick="exportCompany()"><i class="fas fa-file-export"></i> Export</button>
+          <label class="btn-cancel" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+            <i class="fas fa-file-import"></i> Import
+            <input id="importFile" type="file" accept="application/json" style="display:none" onchange="importCompany(event)">
+          </label>
+          <button class="btn-cancel" type="button" onclick="exportCsvCurrent()"><i class="fas fa-file-csv"></i> CSV</button>
+          <button class="btn-cancel" type="button" onclick="recalcAll()"><i class="fas fa-calculator"></i> Recalculate</button>
+          <button class="btn-cancel" type="button" onclick="openQrTool()"><i class="fas fa-qrcode"></i> QR</button>
+          <button class="btn-cancel" type="button" onclick="openSettings()"><i class="fas fa-gear"></i> Ayarlar</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="info-block">
+          <div class="info-row"><div class="info-label">Qeyd</div><div class="info-value">Export/Import yalnız cari şirkət datasına aiddir.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="reports" class="section">
+      <div class="content-header">
+        <h1>Hesabatlar</h1>
+        <div class="header-actions">
+          <input type="month" id="repMonth" class="select-small" onchange="renderAll()">
+          <select id="repView" class="select-small" onchange="renderAll()">
+            <option value="summary" selected>Xülasə</option>
+            <option value="monthly">Aylar üzrə</option>
+            <option value="sales">Satışlar</option>
+            <option value="purch">Alışlar</option>
+            <option value="expense">Xərclər</option>
+            <option value="staff">Əməkdaş</option>
+          </select>
+          <div class="date-range">
+            <input type="date" id="repFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="repTo" onchange="renderAll()">
+          </div>
+        </div>
+      </div>
+      <div class="grid-5">
+        <div class="card stat-card"><small>Satış</small><h2 id="repSales">0.00</h2></div>
+        <div class="card stat-card"><small>Alış</small><h2 id="repCogs">0.00</h2></div>
+        <div class="card stat-card"><small>Xərc</small><h2 id="repExp">0.00</h2></div>
+        <div class="card stat-card"><small>Əməkhaqqı (ay üzrə)</small><h2 id="repPayroll">0.00</h2></div>
+        <div class="card stat-card"><small>Mənfəət/Zərər</small><h2 id="repPL">0.00</h2></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <div class="content-header" style="margin-bottom:10px;">
+          <h1 style="font-size:1.1rem;">Ay üzrə detallı</h1>
+        </div>
+        <table>
+          <thead id="repListHead"></thead>
+          <tbody id="tblRepList"></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:18px;">
+        <div class="content-header" style="margin-bottom:10px;">
+          <h1 style="font-size:1.1rem;">Əməkdaş hesabatı / Əməkhaqqı</h1>
+        </div>
+        <table>
+          <thead><tr><th>#</th><th>Əməkdaş</th><th>Satış sayı</th><th>Satış cəmi</th><th>Faiz</th><th>Komissiya</th><th>Baza maaş</th><th>Yekun</th><th>Əməliyyat</th></tr></thead>
+          <tbody id="tblPayroll"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+  </div>
+  </div>
+
+  <div class="modal" id="mdlMain">
+    <div class="modal-body" id="modalContent"></div>
+  </div>
+
+  <div class="login-overlay" id="loginOverlay" style="display:none;">
+    <div class="login-card">
+      <h2>Giriş</h2>
+      <form onsubmit="login(event)">
+        <div class="grid-3">
+          <select id="loginCompany" class="span-3" required></select>
+          <input id="loginUser" class="span-3" placeholder="İstifadəçi adı" autocomplete="username" required>
+          <input id="loginPass" class="span-3" placeholder="Şifrə" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="modal-footer" style="justify-content:flex-end;">
+          <button class="btn-main" type="submit">Daxil ol</button>
+        </div>
+      </form>
+      <small class="muted" id="loginHint"></small>
+    </div>
+  </div>
+
+  <div id="toastWrap" class="toast-wrap" aria-live="polite"></div>
+
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-card">
+      <div class="loading-spinner"></div>
+      <p id="loadingText">Yüklənir...</p>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,4465 @@
+// Bakfon ERP - LocalStorage və ya Firestore (realtime)
+
+const BASE_STORAGE_KEY = "bakfon_erp_v1";
+const META_KEY = "bakfon_erp_meta_v1";
+
+const defaultDB = () => ({
+  cust: [],
+  supp: [],
+  prod: [],
+  purch: [],
+  sales: [],
+  staff: [],
+  cash: [],
+  accounts: [{ uid: 1, name: "Kassa", type: "cash" }],
+  counters: { purchInv: 1, salesInv: 1 },
+  expenseCats: [
+    { name: "Kommunal", subs: ["İşıq", "Su", "Qaz", "İnternet"] },
+    { name: "Ofis", subs: ["Kantselyariya", "Təmir", "İcarə"] },
+    { name: "Digər", subs: ["Digər"] },
+  ],
+  audit: [],
+  trash: [],
+  settings: { companyName: "Bakfon", companyAddress: "", companyPhone: "", currency: "AZN", currencySymbol: "₼" },
+});
+
+const defaultMeta = () => ({ companies: [], users: [], session: null });
+let meta = defaultMeta();
+let db = defaultDB();
+
+const useFirestore = () => typeof FIREBASE_CONFIG !== "undefined" && FIREBASE_CONFIG && typeof firebase !== "undefined";
+let firestoreUnsubMeta = null;
+let firestoreUnsubCompany = null;
+let firestoreInitialized = false;
+
+function setLoading(text) {
+  const el = byId("loadingText");
+  const ov = byId("loadingOverlay");
+  if (el) el.textContent = text || "Yüklənir...";
+  if (ov) ov.classList.toggle("hidden", !text);
+}
+
+function initFirestore() {
+  if (!useFirestore() || firestoreInitialized) return;
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    firebase.firestore().settings({ experimentalForceLongPolling: false });
+    firestoreInitialized = true;
+  } catch (e) {
+    console.warn("Firebase init xətası:", e);
+  }
+}
+
+function getMetaRef() {
+  if (!firestoreInitialized) return null;
+  return firebase.firestore().collection("config").doc("meta");
+}
+
+function getCompanyRef(companyId) {
+  if (!firestoreInitialized) return null;
+  const cid = String(companyId || "").trim() || "default";
+  return firebase.firestore().collection("companies").doc(cid);
+}
+
+function loadMetaSync() {
+  try {
+    const raw = localStorage.getItem(META_KEY);
+    if (!raw) return defaultMeta();
+    return { ...defaultMeta(), ...JSON.parse(raw) };
+  } catch {
+    return defaultMeta();
+  }
+}
+
+function loadCompanyDBSync() {
+  try {
+    const cid = meta?.session?.companyId || meta?.companies?.[0]?.id || "default";
+    const raw = localStorage.getItem(companyDBKey(cid));
+    if (!raw) return defaultDB();
+    return { ...defaultDB(), ...JSON.parse(raw) };
+  } catch {
+    return defaultDB();
+  }
+}
+
+async function loadMetaAsync() {
+  if (!useFirestore()) return loadMetaSync();
+  const ref = getMetaRef();
+  if (!ref) return loadMetaSync();
+  try {
+    const snap = await ref.get();
+    if (snap.exists()) return { ...defaultMeta(), ...snap.data() };
+    const local = loadMetaSync();
+    if (local && (local.companies?.length || local.users?.length)) {
+      await ref.set(JSON.parse(JSON.stringify(local)));
+      return local;
+    }
+  } catch (e) {
+    console.warn("Firestore meta oxuma xətası:", e);
+  }
+  return loadMetaSync();
+}
+
+async function loadCompanyDBAsync() {
+  if (!useFirestore()) return loadCompanyDBSync();
+  const cid = meta?.session?.companyId || meta?.companies?.[0]?.id || "default";
+  const ref = getCompanyRef(cid);
+  if (!ref) return loadCompanyDBSync();
+  try {
+    const snap = await ref.get();
+    if (snap.exists()) return { ...defaultDB(), ...snap.data() };
+    const local = loadCompanyDBSync();
+    const hasData = local.cust?.length || local.sales?.length || local.staff?.length || local.purch?.length;
+    if (hasData) {
+      await ref.set(JSON.parse(JSON.stringify(local)));
+      return local;
+    }
+  } catch (e) {
+    console.warn("Firestore company oxuma xətası:", e);
+  }
+  return loadCompanyDBSync();
+}
+
+function subscribeRealtime() {
+  if (!useFirestore()) return;
+  unsubscribeRealtime();
+  const metaRef = getMetaRef();
+  if (metaRef) {
+    firestoreUnsubMeta = metaRef.onSnapshot(
+      (snap) => {
+        if (snap.exists()) {
+          const next = { ...defaultMeta(), ...snap.data() };
+          meta.companies = next.companies || meta.companies;
+          meta.users = next.users || meta.users;
+          if (next.session) meta.session = next.session;
+          applyAccessUI();
+        }
+      },
+      (err) => console.warn("Firestore meta listener:", err)
+    );
+  }
+  const cid = meta?.session?.companyId;
+  if (cid) {
+    const companyRef = getCompanyRef(cid);
+    if (companyRef) {
+      firestoreUnsubCompany = companyRef.onSnapshot(
+        (snap) => {
+          if (snap.exists()) {
+            db = { ...defaultDB(), ...snap.data() };
+            renderAll();
+          }
+        },
+        (err) => console.warn("Firestore company listener:", err)
+      );
+    }
+  }
+}
+
+function unsubscribeRealtime() {
+  if (firestoreUnsubMeta) {
+    firestoreUnsubMeta();
+    firestoreUnsubMeta = null;
+  }
+  if (firestoreUnsubCompany) {
+    firestoreUnsubCompany();
+    firestoreUnsubCompany = null;
+  }
+}
+
+const uiState = {
+  page: {
+    purch: 1,
+    sales: 1,
+    debts: 1,
+    cred: 1,
+    cash: 1,
+  },
+};
+
+function ensureAccounts() {
+  if (!db.accounts || !Array.isArray(db.accounts) || db.accounts.length === 0) {
+    db.accounts = [{ uid: 1, name: "Kassa", type: "cash" }];
+  }
+  // ensure unique ids
+  if (!db.accounts.some((a) => a.uid === 1)) {
+    db.accounts.unshift({ uid: 1, name: "Kassa", type: "cash" });
+  }
+}
+
+function accountBalance(accountUid) {
+  const id = Number(accountUid);
+  let bal = 0;
+  for (const op of db.cash) {
+    if (Number(op.accountId) !== id) continue;
+    bal += op.type === "in" ? n(op.amount) : -n(op.amount);
+  }
+  return bal;
+}
+
+function accountOptionsHtml(selectedId) {
+  ensureAccounts();
+  return db.accounts
+    .map((a) => `<option value="${a.uid}" ${String(a.uid) === String(selectedId) ? "selected" : ""}>${escapeHtml(a.name)} (${a.type})</option>`)
+    .join("");
+}
+
+function fillCashAccountSelect() {
+  const sel = byId("cashAccount");
+  if (!sel) return;
+  ensureAccounts();
+  const cur = sel.value || "all";
+  sel.innerHTML =
+    `<option value="all">Bütün hesablar</option>` +
+    db.accounts.map((a) => `<option value="${a.uid}">${escapeHtml(a.name)} (${a.type})</option>`).join("");
+  sel.value = cur;
+}
+
+function getSelectedCashAccountId() {
+  const v = byId("cashAccount")?.value || "all";
+  return v === "all" ? null : Number(v);
+}
+
+function openAccount(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  ensureAccounts();
+  const a = idx !== null ? db.accounts[idx] : { name: "", type: "cash" };
+  openModal(`
+    <h2>${idx !== null ? "Hesab redaktə" : "Yeni hesab"}</h2>
+    <form onsubmit="saveAccount(event, ${idx})">
+      <div class="grid-3">
+        <input id="acc_name" class="span-2" placeholder="Hesab adı" value="${escapeHtml(a.name || "")}" required>
+        <select id="acc_type">
+          <option value="cash" ${a.type === "cash" ? "selected" : ""}>kassa</option>
+          <option value="bank" ${a.type === "bank" ? "selected" : ""}>bank</option>
+          <option value="card" ${a.type === "card" ? "selected" : ""}>kart</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Yarat"}</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveAccount(e, idx) {
+  e.preventDefault();
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  ensureAccounts();
+  const name = val("acc_name").trim();
+  const type = val("acc_type");
+  if (!name) return;
+
+  if (idx === null) {
+    const uid = genId(db.accounts, 1);
+    db.accounts.push({ uid, name, type });
+  } else {
+    const keepUid = db.accounts[idx].uid;
+    // protect built-in Kassa uid=1
+    db.accounts[idx] = { uid: keepUid, name, type };
+  }
+  saveDB();
+  closeMdl();
+}
+
+function delAccount(idx) {
+  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  ensureAccounts();
+  const a = db.accounts[idx];
+  if (!a) return;
+  if (a.uid === 1) return alert("Əsas Kassa silinə bilməz.");
+  const used = db.cash.some((c) => Number(c.accountId) === Number(a.uid));
+  if (used) return alert("Bu hesabda əməliyyat var, silmək olmaz.");
+  if (!confirm("Hesab silinsin?")) return;
+  db.accounts.splice(idx, 1);
+  saveDB();
+}
+
+function companyDBKey(companyId) {
+  return `${BASE_STORAGE_KEY}::${String(companyId || "").trim() || "default"}`;
+}
+
+function loadCompanyDB() {
+  try {
+    const cid = meta?.session?.companyId || meta?.companies?.[0]?.id || "default";
+    const raw = localStorage.getItem(companyDBKey(cid));
+    if (!raw) return defaultDB();
+    const parsed = JSON.parse(raw);
+    return { ...defaultDB(), ...parsed };
+  } catch {
+    return defaultDB();
+  }
+}
+
+function saveCompanyDB() {
+  const cid = meta?.session?.companyId || meta?.companies?.[0]?.id || "default";
+  if (useFirestore()) {
+    const ref = getCompanyRef(cid);
+    if (ref) {
+      const data = JSON.parse(JSON.stringify(db));
+      ref.set(data).catch((e) => console.warn("Firestore company yazma xətası:", e));
+    }
+  } else {
+    localStorage.setItem(companyDBKey(cid), JSON.stringify(db));
+  }
+}
+
+let lastSavedAt = 0;
+let lastSavedToastAt = 0;
+function updateLastSavedEl() {
+  const el = byId("lastSavedEl");
+  if (!el) return;
+  lastSavedAt = Date.now();
+  const d = new Date();
+  const t = [d.getHours(), d.getMinutes(), d.getSeconds()].map((x) => String(x).padStart(2, "0")).join(":");
+  el.textContent = "Saxlanıldı " + t;
+  el.classList.add("saved-flash");
+  setTimeout(() => el.classList.remove("saved-flash"), 1800);
+  if (lastSavedAt - lastSavedToastAt > 2500) {
+    lastSavedToastAt = lastSavedAt;
+    toast("Məlumat avtomatik saxlanıldı", "ok", 1500);
+  }
+}
+
+function saveDB() {
+  ensureAuditTrash();
+  saveCompanyDB();
+  updateLastSavedEl();
+  renderAll();
+}
+
+function logEvent(action, target, details = {}) {
+  ensureAuditTrash();
+  const u = currentUser();
+  db.audit.push({
+    uid: genId(db.audit, 1),
+    ts: nowISODateTimeLocal(),
+    user: userDisplay(u),
+    action,
+    target,
+    details,
+  });
+  if (db.audit.length > 5000) db.audit = db.audit.slice(db.audit.length - 5000);
+}
+
+function loadMeta() {
+  try {
+    const raw = localStorage.getItem(META_KEY);
+    if (!raw) return { companies: [], users: [], session: null };
+    const parsed = JSON.parse(raw);
+    return { companies: [], users: [], session: null, ...parsed };
+  } catch {
+    return { companies: [], users: [], session: null };
+  }
+}
+
+function saveMeta() {
+  if (useFirestore()) {
+    const ref = getMetaRef();
+    if (ref) {
+      const data = JSON.parse(JSON.stringify(meta));
+      ref.set(data).catch((e) => console.warn("Firestore meta yazma xətası:", e));
+    }
+  } else {
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+  }
+  updateLastSavedEl();
+}
+
+function ensureMetaDefaults() {
+  if (!meta.companies || !Array.isArray(meta.companies)) meta.companies = [];
+  if (!meta.users || !Array.isArray(meta.users)) meta.users = [];
+
+  if (meta.companies.length === 0) {
+    meta.companies.push({ id: "bakfon", name: "Bakfon" });
+  }
+  const devIdx = meta.users.findIndex((u) => u.username === "developer");
+  if (devIdx === -1) {
+    meta.users.push({
+      uid: 1,
+      username: "developer",
+      pass: "developer",
+      fullName: "Developer",
+      role: "developer",
+      active: true,
+      perms: { sections: ["*"] },
+      createdAt: nowISODateTimeLocal(),
+    });
+  } else {
+    // self-heal developer user so dev always sees everything
+    const u = meta.users[devIdx];
+    if (!u.uid) u.uid = 1;
+    u.role = "developer";
+    u.active = true;
+    if (!u.perms) u.perms = { sections: ["*"] };
+    if (!Array.isArray(u.perms.sections) || u.perms.sections.length === 0) u.perms.sections = ["*"];
+    if (!u.perms.sections.includes("*")) u.perms.sections.unshift("*");
+    if (!u.pass) u.pass = "developer";
+    if (!u.fullName) u.fullName = "Developer";
+    if (!u.createdAt) u.createdAt = nowISODateTimeLocal();
+  }
+  if (!meta.session || !meta.session.companyId) {
+    meta.session = null;
+  }
+  saveMeta();
+}
+
+function currentUser() {
+  const uid = meta?.session?.userUid;
+  return meta.users.find((u) => Number(u.uid) === Number(uid)) || null;
+}
+
+function userDisplay(u) {
+  if (!u) return "-";
+  const un = String(u.username || "").trim();
+  const staffUid = u.staffUid != null && u.staffUid !== "" ? String(u.staffUid) : null;
+  if (staffUid && db.staff && db.staff.length) {
+    const staff = db.staff.find((s) => String(s.uid) === staffUid);
+    if (staff && staff.name) return `${staff.name} (${un})`;
+  }
+  const fn = String(u.fullName || "").trim();
+  if (fn && un) return `${fn} (${un})`;
+  return fn || un || "-";
+}
+
+function isDeveloper() {
+  const u = currentUser();
+  return !!u && u.role === "developer";
+}
+
+function userCanSection(sectionId) {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  const secs = u.perms?.sections || [];
+  return secs.includes("*") || secs.includes(sectionId);
+}
+
+function userCanEdit() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canEdit;
+}
+
+function userCanDelete() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canDelete;
+}
+
+function userCanPay() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canPay;
+}
+
+function userCanRefund() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canRefund;
+}
+
+function userCanExport() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canExport;
+}
+
+function userCanImport() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canImport;
+}
+
+function userCanReset() {
+  const u = currentUser();
+  if (!u || !u.active) return false;
+  if (u.role === "developer") return true;
+  return !!u.perms?.canReset;
+}
+
+function toast(msg, kind = "ok", ms = 2600) {
+  const wrap = byId("toastWrap");
+  if (!wrap) return;
+  const el = document.createElement("div");
+  el.className = `toast ${kind} small`;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = "0";
+    el.style.transform = "translateY(6px)";
+    el.style.transition = "opacity .2s ease, transform .2s ease";
+  }, Math.max(200, ms - 250));
+  setTimeout(() => el.remove(), ms);
+}
+
+function openAuditDetails(uid) {
+  const a = (db.audit || []).find((x) => Number(x.uid) === Number(uid));
+  if (!a) return;
+  openModal(`
+    <h2>Audit detalları</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Tarix</div><div class="info-value">${fmtDT(a.ts)}</div></div>
+      <div class="info-row"><div class="info-label">İstifadəçi</div><div class="info-value">${escapeHtml(a.user || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Əməliyyat</div><div class="info-value">${escapeHtml(a.action || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Hədəf</div><div class="info-value">${escapeHtml(a.target || "-")}</div></div>
+    </div>
+    <div class="card" style="padding:0;">
+      <pre style="margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(JSON.stringify(a.details || {}, null, 2))}</pre>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function applyAccessUI() {
+  const dev = isDeveloper();
+  document.querySelectorAll(".dev-only").forEach((el) => {
+    // CSS has `.dev-only{display:none}`, so we must explicitly override when dev.
+    // dev menu container uses block
+    if (el.id === "devMenu") el.style.display = dev ? (el.style.display || "none") : "none";
+    else el.style.display = dev ? "flex" : "none";
+  });
+
+  // Hide sections the user can't access (nav links)
+  document.querySelectorAll(".nav-link").forEach((el) => {
+    const on = el.getAttribute("onclick") || "";
+    const m = on.match(/showSec\('([^']+)'/);
+    if (!m) return;
+    const secId = m[1];
+    if (el.classList.contains("dev-only")) return; // handled above
+    el.style.display = userCanSection(secId) ? "flex" : "none";
+  });
+}
+
+function toggleDevMenu() {
+  const menu = byId("devMenu");
+  if (!menu) return;
+  const open = menu.style.display !== "none";
+  menu.style.display = open ? "none" : "block";
+}
+
+function sectionLabelAz(id) {
+  const map = {
+    dash: "Dashboard",
+    cust: "Müştərilər",
+    supp: "Təchizatçılar",
+    prod: "Məhsullar",
+    purch: "Alışlar",
+    stock: "Anbar",
+    sales: "Satışlar",
+    staff: "Əməkdaşlar",
+    debts: "Debitor borclar",
+    creditor: "Kreditor borclar",
+    cash: "Kassa",
+    accounts: "Hesablar",
+    audit: "Audit",
+    trash: "Səbət",
+    tools: "Alətlər",
+    reports: "Hesabatlar",
+    profile: "Profil",
+  };
+  return map[id] || id;
+}
+
+function showLoginOverlay(show) {
+  const ov = byId("loginOverlay");
+  if (!ov) return;
+  ov.style.display = show ? "flex" : "none";
+  document.body.classList.toggle("login-open", !!show);
+  if (show) {
+    const sel = byId("loginCompany");
+    if (sel) {
+      sel.innerHTML = meta.companies.map((c) => `<option value="${escapeAttr(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.id)})</option>`).join("");
+    }
+    byId("loginHint").innerText = "Default: developer / developer";
+    setTimeout(() => byId("loginUser")?.focus(), 0);
+  }
+}
+
+function login(e) {
+  e.preventDefault();
+  const companyId = val("loginCompany");
+  const username = val("loginUser").trim();
+  const pass = val("loginPass");
+  const u = meta.users.find((x) => x.username === username);
+  if (!u || !u.active) return alert("İstifadəçi tapılmadı (və ya deaktivdir).");
+  if (u.pass !== pass) return alert("Şifrə yanlışdır.");
+  const c = meta.companies.find((x) => x.id === companyId);
+  if (!c) return alert("Şirkət tapılmadı.");
+
+  meta.session = { companyId: c.id, userUid: u.uid };
+  saveMeta();
+  if (useFirestore()) {
+    loadCompanyDBAsync().then((data) => {
+      db = data;
+      unsubscribeRealtime();
+      subscribeRealtime();
+      showLoginOverlay(false);
+      applyAccessUI();
+      logEvent("login", "auth", { companyId: c.id });
+      renderAll();
+    });
+  } else {
+    db = loadCompanyDB();
+    showLoginOverlay(false);
+    applyAccessUI();
+    logEvent("login", "auth", { companyId: c.id });
+    renderAll();
+  }
+}
+
+function logout() {
+  try {
+    logEvent("logout", "auth", {});
+  } catch {}
+  meta.session = null;
+  saveMeta();
+  closeMdl();
+  showLoginOverlay(true);
+  applyAccessUI();
+}
+
+function n(v) {
+  const x = parseFloat(v);
+  return Number.isFinite(x) ? x : 0;
+}
+
+function money(v) {
+  return n(v).toFixed(2);
+}
+
+function nowISODate() {
+  const d = new Date();
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function nowISODateTimeLocal() {
+  const d = new Date();
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+function fmtDT(input) {
+  if (!input) return "-";
+  const s = String(input);
+  const [datePart, timePartRaw] = s.split("T");
+  const [y, m, d] = (datePart || "").split("-").map(Number);
+  if (!y || !m || !d) return escapeHtml(s);
+  const dd = String(d).padStart(2, "0");
+  const mm = String(m).padStart(2, "0");
+  const yy = String(y);
+  let timePart = timePartRaw || "00:00";
+  timePart = timePart.slice(0, 5);
+  return `${dd}.${mm}.${yy} ${timePart}`;
+}
+
+function monthRange(monthStr) {
+  // monthStr: YYYY-MM
+  if (!monthStr) return null;
+  const [y, m] = String(monthStr).split("-").map(Number);
+  if (!y || !m) return null;
+  const from = new Date(y, m - 1, 1, 0, 0, 0, 0).getTime();
+  const to = new Date(y, m, 1, 0, 0, 0, 0).getTime() - 1;
+  return { from, to };
+}
+
+function inMonth(dtStr, monthStr) {
+  const r = monthRange(monthStr);
+  if (!r) return true;
+  const t = datePartMs(dtStr);
+  if (t === null) return false;
+  return t >= r.from && t <= r.to;
+}
+
+function pad4(num) {
+  return String(Number(num) || 0).padStart(4, "0");
+}
+
+function pad6(num) {
+  return String(Number(num) || 0).padStart(6, "0");
+}
+
+function ensureCounters() {
+  if (!db.counters) db.counters = { purchInv: 1, salesInv: 1 };
+  if (typeof db.counters.purchInv !== "number") db.counters.purchInv = 1;
+  if (typeof db.counters.salesInv !== "number") db.counters.salesInv = 1;
+}
+
+function ensureAuditTrash() {
+  if (!db.audit || !Array.isArray(db.audit)) db.audit = [];
+  if (!db.trash || !Array.isArray(db.trash)) db.trash = [];
+  if (!db.settings) db.settings = defaultDB().settings;
+}
+
+function nextInvNo(kind) {
+  ensureCounters();
+  if (kind === "purch") {
+    const n0 = db.counters.purchInv++;
+    return `A-${pad6(n0)}`;
+  }
+  const n0 = db.counters.salesInv++;
+  return `S-${pad6(n0)}`;
+}
+
+function invFallback(kind, uid) {
+  const prefix = kind === "purch" ? "A" : "S";
+  return `${prefix}-${pad6(uid)}`;
+}
+
+function genId(list, minStart = 1) {
+  const max = list.reduce((a, x) => Math.max(a, Number(x.uid) || 0), 0);
+  return Math.max(minStart, max + 1);
+}
+
+function showSec(id, el) {
+  if (meta?.session && !userCanSection(id)) {
+    alert("Bu bölməyə icazə yoxdur.");
+    return;
+  }
+  document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
+  document.querySelectorAll(".nav-link").forEach((l) => l.classList.remove("active"));
+  const sec = document.getElementById(id);
+  if (sec) sec.classList.add("active");
+  if (el) el.classList.add("active");
+  const titleEl = byId("appHeaderTitle");
+  if (titleEl) titleEl.textContent = sectionLabelAz(id);
+}
+
+function pagePrev(key) {
+  uiState.page[key] = Math.max(1, (uiState.page[key] || 1) - 1);
+  renderAll();
+}
+
+function pageNext(key) {
+  uiState.page[key] = (uiState.page[key] || 1) + 1;
+  renderAll();
+}
+
+function getPageSize(selectId, def = 50) {
+  const v = Number(byId(selectId)?.value);
+  return v > 0 ? v : def;
+}
+
+function parseDateOnly(v) {
+  // v: YYYY-MM-DD
+  if (!v) return null;
+  const [y, m, d] = String(v).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+}
+
+function datePartMs(dtStr) {
+  if (!dtStr) return null;
+  const s = String(dtStr);
+  const [datePart] = s.split("T");
+  return parseDateOnly(datePart);
+}
+
+function inDateRange(dtStr, fromId, toId) {
+  const fromMs = parseDateOnly(byId(fromId)?.value);
+  const toMs = parseDateOnly(byId(toId)?.value);
+  if (!fromMs && !toMs) return true;
+  const ms = datePartMs(dtStr);
+  if (ms === null) return false;
+  if (fromMs && ms < fromMs) return false;
+  if (toMs && ms > toMs) return false;
+  return true;
+}
+
+function paginate(list, pageKey, pageSize, infoElId) {
+  const page = Math.max(1, uiState.page[pageKey] || 1);
+  const total = list.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pages);
+  uiState.page[pageKey] = safePage;
+  const start = (safePage - 1) * pageSize;
+  const end = start + pageSize;
+  const slice = list.slice(start, end);
+  const info = byId(infoElId);
+  if (info) info.innerText = `${safePage}/${pages} • ${total}`;
+  return slice;
+}
+
+// Modal helpers
+const modal = document.getElementById("mdlMain");
+function openModal(html) {
+  document.getElementById("modalContent").innerHTML = html;
+  modal.style.display = "flex";
+}
+function closeMdl() {
+  modal.style.display = "none";
+}
+
+// Search
+function filterTable(id, q) {
+  const query = (q || "").toLowerCase();
+  document.querySelectorAll(`#${id} tr`).forEach((r) => {
+    r.style.display = r.innerText.toLowerCase().includes(query) ? "" : "none";
+  });
+}
+
+// Keys for inventory items
+function itemKeyFromPurch(p) {
+  if (Number(p.qty || 1) > 1 || (p.code || "").trim()) return `BULK:${p.uid}`;
+  const ser = (p.seria || "").trim();
+  const i1 = (p.imei1 || "").trim();
+  const i2 = (p.imei2 || "").trim();
+  if (ser) return `SER:${ser}`;
+  if (i1) return `I1:${i1}`;
+  if (i2) return `I2:${i2}`;
+  return `FALLBACK:${p.uid}`;
+}
+
+function soldKeySet() {
+  return new Set(db.sales.filter((s) => !s.returnedAt).map((s) => s.itemKey).filter(Boolean));
+}
+
+function purchIsBulk(p) {
+  return Number(p.qty || 1) > 1 || (p.code || "").trim().length > 0;
+}
+
+function bulkSoldQty(purchUid) {
+  return (db.sales || [])
+    .filter((s) => !s.returnedAt)
+    .filter((s) => String(s.bulkPurchUid || "") === String(purchUid))
+    .reduce((a, b) => a + Math.max(0, n(b.qty || 0)), 0);
+}
+
+function purchRemainingQty(p) {
+  if (!purchIsBulk(p)) return soldKeySet().has(itemKeyFromPurch(p)) ? 0 : 1;
+  const total = Math.max(0, Math.floor(n(p.qty || 0)));
+  const sold = bulkSoldQty(p.uid);
+  return Math.max(0, total - sold);
+}
+
+function canDeletePurchase(p) {
+  if (!purchIsBulk(p)) return !soldKeySet().has(itemKeyFromPurch(p));
+  return bulkSoldQty(p.uid) <= 0.000001;
+}
+
+function purchRemaining(p) {
+  return Math.max(0, n(p.amount) - n(p.paidTotal));
+}
+
+function saleRemaining(s) {
+  return Math.max(0, n(s.amount) - n(s.paidTotal));
+}
+
+function debtStatus(total, rem) {
+  if (rem <= 0.000001) return "paid";
+  if (rem >= total - 0.000001) return "unpaid";
+  return "partial";
+}
+
+function debtLabel(st) {
+  if (st === "paid") return "TAM ÖDƏNİLİB";
+  if (st === "partial") return "QİSMƏN";
+  return "ÖDƏNİLMƏYİB";
+}
+
+function addMonthsISO(dateISO, addMonths) {
+  const [y, m, d] = (dateISO || "").split("-").map(Number);
+  if (!y || !m || !d) return dateISO || "";
+  const dt = new Date(y, m - 1 + addMonths, d);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function buildCreditSchedule(sale) {
+  const term = Number(sale.credit?.termMonths) || 0;
+  const total = n(sale.amount);
+  const down = n(sale.credit?.downPayment);
+  const remAfterDown = Math.max(0, total - down);
+  const monthly = term > 0 ? remAfterDown / term : 0;
+
+  // payments after down:
+  const paid = n(sale.paidTotal);
+  const paidAfterDown = Math.max(0, paid - down);
+  let paidLeft = paidAfterDown;
+  const rows = [];
+  for (let i = 1; i <= term; i++) {
+    const due = addMonthsISO(sale.date, i);
+    const amt = monthly;
+    const paidThis = Math.min(amt, paidLeft);
+    paidLeft -= paidThis;
+    const st = debtStatus(amt, Math.max(0, amt - paidThis));
+    rows.push({ idx: i, due, amount: amt, paid: paidThis, remaining: Math.max(0, amt - paidThis), status: st });
+  }
+  return { term, down, remAfterDown, monthly, rows };
+}
+
+// ========= Customers =========
+function openCust(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const c =
+    idx !== null
+      ? db.cust[idx]
+      : { sur: "", name: "", father: "", fin: "", seriaNum: "", ph1: "", ph2: "", ph3: "", work: "", addr: "", zam: "", creditLimit: "0" };
+
+  const guarantorOptions =
+    `<option value="">Zamin seç (istəyə bağlı)</option>` +
+    db.cust
+      .map((g) => `<option value="${g.uid}" ${String(c.zam) === String(g.uid) ? "selected" : ""}>${g.sur} ${g.name} (${g.uid})</option>`)
+      .join("");
+
+  openModal(`
+    <h2>${idx !== null ? "Müştəri Redaktə" : "Yeni Müştəri"}</h2>
+    <form onsubmit="saveCust(event, ${idx})">
+      <div class="grid-3">
+        <input id="f_sur" value="${escapeHtml(c.sur)}" placeholder="Soyad" required>
+        <input id="f_name" value="${escapeHtml(c.name)}" placeholder="Ad" required>
+        <input id="f_father" value="${escapeHtml(c.father)}" placeholder="Ata Adı">
+
+        <input id="f_fin" value="${escapeHtml(c.fin)}" placeholder="FİN" maxlength="7" required>
+        <input id="f_ser" value="${escapeHtml(c.seriaNum)}" placeholder="ŞV Seriya №" class="span-2">
+
+        <input id="f_ph1" value="${escapeHtml(c.ph1)}" placeholder="Mobil 1" required>
+        <input id="f_ph2" value="${escapeHtml(c.ph2 || "")}" placeholder="Mobil 2">
+        <input id="f_ph3" value="${escapeHtml(c.ph3 || "")}" placeholder="Mobil 3">
+
+        <input id="f_work" value="${escapeHtml(c.work || "")}" placeholder="İş yeri" class="span-2">
+        <input id="f_addr" value="${escapeHtml(c.addr || "")}" placeholder="Ünvan" class="span-3">
+
+        <select id="f_zam" class="span-3">${guarantorOptions}</select>
+        <input type="number" step="0.01" id="f_climit" value="${escapeAttr(String(c.creditLimit ?? "0"))}" class="span-3" placeholder="Kredit limit (AZN) (0 = limitsiz)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda Saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveCust(e, idx) {
+  e.preventDefault();
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  if (idx === null && !userCanEdit()) return alert("Əlavə etmə icazəsi yoxdur.");
+  const isNew = idx === null;
+  const data = {
+    uid: idx !== null ? db.cust[idx].uid : genId(db.cust, 1),
+    createdAt: idx !== null ? (db.cust[idx].createdAt || db.cust[idx].date || nowISODateTimeLocal()) : nowISODateTimeLocal(),
+    sur: val("f_sur"),
+    name: val("f_name"),
+    father: val("f_father"),
+    fin: val("f_fin").toUpperCase(),
+    seriaNum: val("f_ser").toUpperCase(),
+    ph1: val("f_ph1"),
+    ph2: val("f_ph2"),
+    ph3: val("f_ph3"),
+    work: val("f_work"),
+    addr: val("f_addr"),
+    zam: val("f_zam"),
+    creditLimit: String(Math.max(0, n(val("f_climit")))),
+  };
+  if (idx !== null) db.cust[idx] = data;
+  else db.cust.push(data);
+  logEvent(isNew ? "create" : "update", "cust", { uid: data.uid });
+  saveDB();
+  closeMdl();
+}
+
+// ========= Suppliers =========
+function openSupp(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const s = idx !== null ? db.supp[idx] : { co: "", per: "", mob: "", voen: "" };
+  openModal(`
+    <h2>${idx !== null ? "Təchizatçı Redaktə" : "Yeni Təchizatçı"}</h2>
+    <form onsubmit="saveSupp(event, ${idx})">
+      <div class="grid-3">
+        <input id="f_co" value="${escapeHtml(s.co)}" placeholder="Şirkət Adı" class="span-3" required>
+        <input id="f_per" value="${escapeHtml(s.per)}" placeholder="Məsul Şəxs" class="span-2">
+        <input id="f_mob" value="${escapeHtml(s.mob)}" placeholder="Mobil">
+        <input id="f_voen" value="${escapeHtml(s.voen)}" placeholder="VÖEN" class="span-3">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda Saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveSupp(e, idx) {
+  e.preventDefault();
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const isNew = idx === null;
+  const data = {
+    uid: idx !== null ? db.supp[idx].uid : genId(db.supp, 1000),
+    createdAt: idx !== null ? (db.supp[idx].createdAt || db.supp[idx].date || nowISODateTimeLocal()) : nowISODateTimeLocal(),
+    co: val("f_co"),
+    per: val("f_per"),
+    mob: val("f_mob"),
+    voen: val("f_voen"),
+  };
+  if (idx !== null) db.supp[idx] = data;
+  else db.supp.push(data);
+  logEvent(isNew ? "create" : "update", "supp", { uid: data.uid });
+  saveDB();
+  closeMdl();
+}
+
+// ========= Products =========
+function openProd(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const p = idx !== null ? db.prod[idx] : { name: "", cat: "", subCat: "" };
+  openModal(`
+    <h2>${idx !== null ? "Məhsul Redaktə" : "Yeni Məhsul"}</h2>
+    <form onsubmit="saveProd(event, ${idx})">
+      <div class="grid-3">
+        <input id="f_p_name" value="${escapeHtml(p.name)}" placeholder="Məhsul Adı" class="span-3" required>
+        <input id="f_p_cat" value="${escapeHtml(p.cat || "")}" placeholder="Kateqoriya" class="span-2">
+        <input id="f_p_subcat" value="${escapeHtml(p.subCat || "")}" placeholder="Alt kateqoriya">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda Saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveProd(e, idx) {
+  e.preventDefault();
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const isNew = idx === null;
+  const data = {
+    uid: idx !== null ? db.prod[idx].uid : genId(db.prod, 1),
+    createdAt: idx !== null ? (db.prod[idx].createdAt || db.prod[idx].date || nowISODateTimeLocal()) : nowISODateTimeLocal(),
+    name: val("f_p_name"),
+    cat: val("f_p_cat"),
+    subCat: val("f_p_subcat"),
+  };
+  if (idx !== null) db.prod[idx] = data;
+  else db.prod.push(data);
+  logEvent(isNew ? "create" : "update", "prod", { uid: data.uid });
+  saveDB();
+  closeMdl();
+}
+
+// ========= Purchases =========
+function openPurch(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const p =
+    idx !== null
+      ? db.purch[idx]
+      : { date: nowISODateTimeLocal(), supp: "", name: "", code: "", qty: 1, imei1: "", imei2: "", seria: "", amount: "", paidTotal: "0", payType: "nagd" };
+
+  const suppOptions = db.supp.map((s) => `<option value="${escapeAttr(s.co)}" ${p.supp === s.co ? "selected" : ""}>${escapeHtml(s.co)}</option>`).join("");
+  const prodOptions = db.prod.map((x) => `<option value="${escapeAttr(x.name)}" ${p.name === x.name ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("");
+
+  openModal(`
+    <h2>${idx !== null ? "Alış Redaktə" : "Yeni Alış"}</h2>
+    <form onsubmit="savePurch(event, ${idx})">
+      <div class="grid-3">
+        <input type="datetime-local" id="f_p_date" value="${escapeAttr(p.date)}" required>
+        <select id="f_p_supp" class="span-2" required>
+          <option value="">Təchizatçı seç</option>
+          ${suppOptions}
+        </select>
+
+        <select id="f_p_prod" class="span-3" required>
+          <option value="">Məhsul seç</option>
+          ${prodOptions}
+        </select>
+
+        <div class="span-3 paybox">
+          <label class="chk">
+            <input type="checkbox" id="f_p_bulk" onchange="togglePurchBulk()" ${purchIsBulk(p) ? "checked" : ""}>
+            <span>Say ilə alış (IMEI/Seriyasız)</span>
+          </label>
+        </div>
+
+        <div id="pBulkBox" class="grid-3 span-3" style="display:none;">
+          <input id="f_p_code" class="span-2" value="${escapeHtml(p.code || "")}" placeholder="Kod (məs: IP16PM-256)">
+          <input type="number" step="1" min="1" id="f_p_qty" value="${escapeAttr(String(p.qty || 1))}" placeholder="Say">
+        </div>
+
+        <div id="pSerialBox" class="grid-3 span-3" style="display:none;">
+          <input id="f_p_i1" value="${escapeHtml(p.imei1 || "")}" placeholder="IMEI 1">
+          <input id="f_p_i2" value="${escapeHtml(p.imei2 || "")}" placeholder="IMEI 2">
+          <input id="f_p_ser" value="${escapeHtml(p.seria || "")}" placeholder="Seriya №">
+        </div>
+
+        <input type="number" step="0.01" id="f_p_amount" value="${escapeAttr(p.amount)}" placeholder="Məbləğ (AZN)" class="span-2" required>
+        <select id="f_p_payType">
+          <option value="nagd" ${p.payType === "nagd" ? "selected" : ""}>nagd</option>
+          <option value="kocurme" ${p.payType === "kocurme" ? "selected" : ""}>kocurme</option>
+          <option value="kredit" ${p.payType === "kredit" ? "selected" : ""}>kredit</option>
+        </select>
+        <input type="number" step="0.01" id="f_p_paid" value="${escapeAttr(p.paidTotal || "0")}" placeholder="Ödənilən (AZN)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Mədaxil et"}</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+  togglePurchBulk();
+}
+
+function savePurch(e, idx) {
+  e.preventDefault();
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const isNew = idx === null;
+  const isBulk = !!byId("f_p_bulk")?.checked;
+  const qty = isBulk ? Math.max(1, Math.floor(n(val("f_p_qty")))) : 1;
+  const code = isBulk ? val("f_p_code").trim() : "";
+  if (!isBulk) {
+    const imei1 = val("f_p_i1").trim();
+    const imei2 = val("f_p_i2").trim();
+    const seria = val("f_p_ser").trim();
+    const dup = db.purch.some((p, pi) => {
+      if (idx !== null && pi === idx) return false;
+      return (
+        (imei1 && String(p.imei1 || "").trim() === imei1) ||
+        (imei2 && String(p.imei2 || "").trim() === imei2) ||
+        (seria && String(p.seria || "").trim() === seria)
+      );
+    });
+    if (dup) return alert("Bu IMEI/Seriya artıq mövcuddur.");
+  }
+  const data = {
+    uid: idx !== null ? db.purch[idx].uid : genId(db.purch, 1),
+    invNo: idx !== null ? (db.purch[idx].invNo || invFallback("purch", db.purch[idx].uid)) : nextInvNo("purch"),
+    date: val("f_p_date"),
+    supp: val("f_p_supp"),
+    name: val("f_p_prod"),
+    code,
+    qty,
+    imei1: isBulk ? "" : val("f_p_i1").trim(),
+    imei2: isBulk ? "" : val("f_p_i2").trim(),
+    seria: isBulk ? "" : val("f_p_ser").trim(),
+    amount: String(Math.max(0, n(val("f_p_amount")))),
+    payType: val("f_p_payType"),
+    paidTotal: String(Math.max(0, n(val("f_p_paid")))),
+  };
+  if (idx !== null) db.purch[idx] = data;
+  else db.purch.push(data);
+  logEvent(isNew ? "create" : "update", "purch", { uid: data.uid, invNo: data.invNo });
+  saveDB();
+  closeMdl();
+}
+
+function togglePurchBulk() {
+  const bulk = !!byId("f_p_bulk")?.checked;
+  const b = byId("pBulkBox");
+  const s = byId("pSerialBox");
+  if (b) b.style.display = bulk ? "" : "none";
+  if (s) s.style.display = bulk ? "none" : "";
+  const qtyEl = byId("f_p_qty");
+  if (qtyEl) qtyEl.required = bulk;
+}
+
+function toggleSaleQty() {
+  const sel = byId("f_s_item")?.value || "";
+  const isBulk = String(sel).startsWith("bulk:");
+  const box = byId("saleQtyBox");
+  const qtyEl = byId("f_s_qty");
+  if (box) box.style.display = isBulk ? "" : "none";
+  if (qtyEl) {
+    qtyEl.required = isBulk;
+    if (!isBulk) qtyEl.value = "1";
+    if (isBulk && (!qtyEl.value || Number(qtyEl.value) <= 0)) qtyEl.value = "1";
+  }
+}
+
+// ========= Customer/Supplier Info =========
+function openCustInfo(idx) {
+  const c = db.cust[idx];
+  if (!c) return;
+  const guarantor = c.zam ? db.cust.find((x) => String(x.uid) === String(c.zam)) : null;
+  openModal(`
+    <h2>Müştəri məlumatı</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">ID</div><div class="info-value">${c.uid}</div></div>
+      <div class="info-row"><div class="info-label">Ad Soyad Ata</div><div class="info-value">${escapeHtml(`${c.sur} ${c.name} ${c.father}`.trim())}</div></div>
+      <div class="info-row"><div class="info-label">Mobil 1</div><div class="info-value">${escapeHtml(c.ph1 || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Mobil 2</div><div class="info-value">${escapeHtml(c.ph2 || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Mobil 3</div><div class="info-value">${escapeHtml(c.ph3 || "-")}</div></div>
+      <div class="info-row"><div class="info-label">İş yeri</div><div class="info-value">${escapeHtml(c.work || "-")}</div></div>
+      <div class="info-row"><div class="info-label">FİN</div><div class="info-value">${escapeHtml(c.fin || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Seriya №</div><div class="info-value">${escapeHtml(c.seriaNum || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Ünvan</div><div class="info-value">${escapeHtml(c.addr || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Zamin</div><div class="info-value">${guarantor ? escapeHtml(`${guarantor.sur} ${guarantor.name} (${guarantor.uid})`) : "-"}</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="openCust(${idx})">Redaktə</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openSuppInfo(idx) {
+  const s = db.supp[idx];
+  if (!s) return;
+  openModal(`
+    <h2>Təchizatçı məlumatı</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">ID</div><div class="info-value">${s.uid}</div></div>
+      <div class="info-row"><div class="info-label">Şirkət</div><div class="info-value">${escapeHtml(s.co || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Məsul şəxs</div><div class="info-value">${escapeHtml(s.per || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Mobil</div><div class="info-value">${escapeHtml(s.mob || "-")}</div></div>
+      <div class="info-row"><div class="info-label">VÖEN</div><div class="info-value">${escapeHtml(s.voen || "-")}</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="openSupp(${idx})">Redaktə</button>
+      <button class="btn-cancel" type="button" onclick="openSupplierPaymentHistory(${idx})">Ödəniş tarixçəsi</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openSupplierPaymentHistory(idx) {
+  const s = db.supp[idx];
+  if (!s) return;
+
+  const rows = db.cash
+    .filter((c) => c.type === "out")
+    .filter((c) => c.link && (c.link.kind === "creditor_payment" || c.link.kind === "creditor_invoice_payment"))
+    .filter((c) => String(c.link.supp) === String(s.co))
+    .slice()
+    .sort((a, b) => (a.date > b.date ? -1 : 1))
+    .flatMap((c) => {
+      const allocs = c.meta?.allocations?.length
+        ? c.meta.allocations
+        : [{ purchUid: c.link?.purchUid ?? "-", amount: c.amount }];
+      return allocs.map(
+        (a) => `
+        <tr>
+          <td>${c.uid}</td>
+          <td>${fmtDT(c.date)}</td>
+          <td>${a.purchUid ?? "-"}</td>
+          <td class="amt-out">-${money(a.amount)} AZN</td>
+          <td>${escapeHtml(c.note || "")}</td>
+        </tr>`
+      );
+    })
+    .join("");
+
+  openModal(`
+    <h2>Təchizatçı ödəniş tarixçəsi</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Təchizatçı</div><div class="info-value">${escapeHtml(s.co)}</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Əməliyyat</th><th>Tarix</th><th>Qaimə</th><th>Məbləğ</th><th>Qeyd</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="5">Tarixçə boşdur</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="openSuppInfo(${idx})">Geri</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+// ========= Staff =========
+function openStaff(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const s = idx !== null ? db.staff[idx] : { name: "", role: "", phone: "", baseSalary: "0", commPct: "0" };
+  openModal(`
+    <h2>${idx !== null ? "Əməkdaş Redaktə" : "Yeni Əməkdaş"}</h2>
+    <form onsubmit="saveStaff(event, ${idx})">
+      <div class="grid-3">
+        <input id="f_st_name" value="${escapeHtml(s.name)}" placeholder="Ad Soyad" class="span-3" required>
+        <input id="f_st_role" value="${escapeHtml(s.role || "")}" placeholder="Vəzifə" class="span-2">
+        <input id="f_st_phone" value="${escapeHtml(s.phone || "")}" placeholder="Telefon">
+        <input type="number" step="0.01" id="f_st_salary" value="${escapeAttr(String(s.baseSalary ?? "0"))}" class="span-2" placeholder="Standart maaş (AZN)">
+        <input type="number" step="0.01" id="f_st_comm" value="${escapeAttr(String(s.commPct ?? "0"))}" placeholder="Satışdan faiz (%)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Yadda saxla"}</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveStaff(e, idx) {
+  e.preventDefault();
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const isNew = idx === null;
+  const data = {
+    uid: idx !== null ? db.staff[idx].uid : genId(db.staff, 1),
+    createdAt: idx !== null ? (db.staff[idx].createdAt || db.staff[idx].date || nowISODateTimeLocal()) : nowISODateTimeLocal(),
+    name: val("f_st_name"),
+    role: val("f_st_role"),
+    phone: val("f_st_phone"),
+    baseSalary: String(Math.max(0, n(val("f_st_salary")))),
+    commPct: String(Math.max(0, n(val("f_st_comm")))),
+  };
+  if (idx !== null) db.staff[idx] = data;
+  else db.staff.push(data);
+  logEvent(isNew ? "create" : "update", "staff", { uid: data.uid });
+  saveDB();
+  closeMdl();
+}
+
+// ========= Əməkhaqqı hesabla (əməkdaşlar bölməsindən) =========
+function openStaffPayrollCalc() {
+  const d = new Date();
+  const currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  openModal(`
+    <h2>Əməkhaqqı hesabı</h2>
+    <p class="muted">Seçilmiş ay üçün hər əməkdaşın baza maaşı + satışdan faiz (bonus) ilə yekun məbləğ.</p>
+    <div class="grid-3" style="margin-bottom:14px;">
+      <label style="display:flex;align-items:center;gap:8px;">
+        <span>Ay:</span>
+        <input type="month" id="payrollCalcMonth" value="${currentMonth}" onchange="updateStaffPayrollTable()" class="select-small">
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Əməkdaş</th><th>Baza maaş</th><th>Satış cəmi (ay)</th><th>Faiz %</th><th>Komissiya</th><th>Yekun</th></tr></thead>
+        <tbody id="staffPayrollTableBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+  updateStaffPayrollTable();
+}
+
+function updateStaffPayrollTable() {
+  const monthKey = byId("payrollCalcMonth")?.value || "";
+  const tbody = byId("staffPayrollTableBody");
+  if (!tbody) return;
+  if (!monthKey) {
+    tbody.innerHTML = "<tr><td colspan=\"7\">Ay seçin</td></tr>";
+    return;
+  }
+  const salesInMonth = (db.sales || [])
+    .filter((s) => !s.returnedAt)
+    .filter((s) => inMonth(s.date, monthKey));
+  const byEmp = new Map();
+  for (const s of salesInMonth) {
+    const empId = String(s.employeeId || "");
+    if (!empId) continue;
+    byEmp.set(empId, (byEmp.get(empId) || 0) + n(s.amount));
+  }
+  const staffSorted = (db.staff || []).slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  let grandTotal = 0;
+  const rows = staffSorted
+    .map((st, i) => {
+      const salesSum = byEmp.get(String(st.uid)) || 0;
+      const base = Math.max(0, n(st.baseSalary || 0));
+      const pct = Math.max(0, n(st.commPct || 0));
+      const comm = salesSum * (pct / 100);
+      const total = base + comm;
+      grandTotal += total;
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(st.name)}</td>
+        <td>${money(base)} AZN</td>
+        <td>${money(salesSum)} AZN</td>
+        <td>${money(pct)}%</td>
+        <td>${money(comm)} AZN</td>
+        <td>${money(total)} AZN</td>
+      </tr>`;
+    })
+    .join("");
+  tbody.innerHTML = rows + (rows ? `<tr class="total-row"><td colspan="6"><strong>Cəmi</strong></td><td><strong>${money(grandTotal)} AZN</strong></td></tr>` : "<tr><td colspan=\"7\">Əməkdaş yoxdur</td></tr>");
+}
+
+// ========= Əməkdaş əməkhaqqı ödə (Ödə düyməsi) =========
+function staffSalaryPaidForMonth(staffUid, monthKey) {
+  return (db.cash || []).filter(
+    (c) => c.type === "out" && c.link && c.link.kind === "staff_salary" && String(c.link.staffUid) === String(staffUid) && String(c.link.monthKey || "") === String(monthKey)
+  ).reduce((a, c) => a + n(c.amount), 0);
+}
+
+function openStaffPay() {
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const d = new Date();
+  const currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  openModal(`
+    <h2>Əməkhaqqı ödə</h2>
+    <p class="muted">Ay seçin, sonra hər əməkdaş üçün "Rəsmi ödə" və ya "Nəğd ödə" ilə hesab seçib ödəniş edin. Ödəniş Kassa və Hesablar bölməsində əks olunacaq.</p>
+    <div class="grid-3" style="margin-bottom:14px;">
+      <label style="display:flex;align-items:center;gap:8px;">
+        <span>Ay:</span>
+        <input type="month" id="staffPayMonth" value="${currentMonth}" onchange="renderStaffPayList()" class="select-small">
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Əməkdaş</th><th>Hesablanmış əməkhaqqı</th><th>Ödənilib</th><th>Əməliyyat</th></tr></thead>
+        <tbody id="staffPayListBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+  renderStaffPayList();
+}
+
+function renderStaffPayList() {
+  const monthKey = byId("staffPayMonth")?.value || "";
+  const tbody = byId("staffPayListBody");
+  if (!tbody) return;
+  if (!monthKey) {
+    tbody.innerHTML = "<tr><td colspan=\"5\">Ay seçin</td></tr>";
+    return;
+  }
+  const salesInMonth = (db.sales || []).filter((s) => !s.returnedAt).filter((s) => inMonth(s.date, monthKey));
+  const byEmp = new Map();
+  for (const s of salesInMonth) {
+    const empId = String(s.employeeId || "");
+    if (!empId) continue;
+    byEmp.set(empId, (byEmp.get(empId) || 0) + n(s.amount));
+  }
+  const staffSorted = (db.staff || []).slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const rows = staffSorted
+    .map((st, i) => {
+      const salesSum = byEmp.get(String(st.uid)) || 0;
+      const base = Math.max(0, n(st.baseSalary || 0));
+      const pct = Math.max(0, n(st.commPct || 0));
+      const comm = salesSum * (pct / 100);
+      const total = base + comm;
+      const paid = staffSalaryPaidForMonth(st.uid, monthKey);
+      const paidLabel = paid > 0.000001 ? `${money(paid)} AZN ödənilib` : "—";
+      const staffNameJson = JSON.stringify(st.name || "");
+      const monthKeyJson = JSON.stringify(monthKey);
+      const onclickResmi = `closeMdl(); openStaffPayConfirm(${st.uid}, ${staffNameJson}, ${total}, ${monthKeyJson}, 'resmi')`;
+      const onclickNagd = `closeMdl(); openStaffPayConfirm(${st.uid}, ${staffNameJson}, ${total}, ${monthKeyJson}, 'nagd')`;
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(st.name)}</td>
+        <td>${money(total)} AZN</td>
+        <td>${paidLabel}</td>
+        <td class="tbl-actions">
+          <button class="btn-mini" type="button" onclick="${escapeAttr(onclickResmi)}">Rəsmi ödə</button>
+          <button class="btn-mini" type="button" onclick="${escapeAttr(onclickNagd)}">Nəğd ödə</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  tbody.innerHTML = rows || "<tr><td colspan=\"5\">Əməkdaş yoxdur</td></tr>";
+}
+
+function openStaffPayConfirm(staffUid, staffName, amount, monthKey, payType) {
+  const payLabel = payType === "resmi" ? "Rəsmi ödəniş" : "Nəğd ödəniş";
+  ensureAccounts();
+  const accOptions = accountOptionsHtml(1);
+  const amt = Math.max(0, n(amount));
+  const dateVal = nowISODateTimeLocal().slice(0, 16);
+  openModal(`
+    <h2>Əməkhaqqı: ${escapeHtml(staffName)} — ${payLabel}</h2>
+    <form onsubmit="submitStaffPay(event, ${escapeAttr(String(staffUid))}, ${escapeAttr(JSON.stringify(staffName))}, ${amt}, ${escapeAttr(JSON.stringify(monthKey))}, '${payType}')">
+      <div class="grid-3">
+        <label class="span-3">Hesab (ödənişin çıxılacağı)</label>
+        <select id="staff_pay_acc" class="span-3" required>${accOptions}</select>
+        <label class="span-3">Məbləğ (AZN)</label>
+        <input type="number" step="0.01" min="0" id="staff_pay_amount" value="${amt}" class="span-2" required>
+        <label class="span-3">Tarix</label>
+        <input type="datetime-local" id="staff_pay_date" value="${dateVal}" class="span-3" required>
+        <label class="span-3">Qeyd (istəyə bağlı)</label>
+        <input type="text" id="staff_pay_note" placeholder="Məs: 2024-01 əməkhaqqı" class="span-3">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Ödəniş et</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function submitStaffPay(e, staffUid, staffName, defaultAmount, monthKey, payType) {
+  e.preventDefault();
+  if (!userCanPay()) return;
+  const accId = Number(val("staff_pay_acc") || 1);
+  const amount = Math.max(0, n(val("staff_pay_amount")));
+  const date = val("staff_pay_date") || nowISODateTimeLocal();
+  const note = (val("staff_pay_note") || "").trim() || `Əməkhaqqı ${monthKey} (${payType === "resmi" ? "rəsmi" : "nəğd"})`;
+  if (amount <= 0.000001) return alert("Məbləğ 0-dan böyük olmalıdır.");
+  const bal = accountBalance(accId);
+  if (bal + 0.000001 < amount) {
+    alert("Hesab balansı kifayət etmir. Mənfiyə düşəcək.");
+    return;
+  }
+  const payLabel = payType === "resmi" ? "Rəsmi" : "Nəğd";
+  addCashOp({
+    type: "out",
+    date,
+    source: `Əməkhaqqı (${staffName}) — ${payLabel}`,
+    amount,
+    note,
+    link: { kind: "staff_salary", staffUid, staffName, monthKey, payType },
+    accountId: accId,
+  });
+  logEvent("create", "cash", { type: "out", kind: "staff_salary", staffUid, monthKey, amount });
+  saveDB();
+  closeMdl();
+  renderAll();
+  toast(`Əməkhaqqı ödənildi: ${amount} AZN`, "ok");
+}
+
+// ========= Sales (with credit fields) =========
+function openSale(idx = null) {
+  if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const isEdit = idx !== null;
+  const current = isEdit ? db.sales[idx] : null;
+
+  const sold = soldKeySet();
+  const stockItems = db.purch
+    .map((p) => {
+      const type = purchIsBulk(p) ? "bulk" : "serial";
+      const key = itemKeyFromPurch(p);
+      const rem = purchRemainingQty(p);
+      return { p, type, key, rem };
+    })
+    .filter((x) => {
+      if (isEdit && current) {
+        if (x.type === "bulk" && String(current.bulkPurchUid || "") === String(x.p.uid)) return true;
+        if (x.type === "serial" && current.itemKey === x.key) return true;
+      }
+      return x.rem > 0;
+    });
+
+  const custOptions =
+    `<option value="">Müştəri seç</option>` +
+    db.cust.map((c) => `<option value="${c.uid}">${escapeHtml(c.sur)} ${escapeHtml(c.name)} (${c.uid})</option>`).join("");
+  const staffOptions =
+    `<option value="">Əməkdaş seç</option>` +
+    db.staff.map((s) => `<option value="${s.uid}">${escapeHtml(s.name)}${s.role ? " - " + escapeHtml(s.role) : ""}</option>`).join("");
+
+  const itemOptions = stockItems.length
+    ? stockItems
+        .map((x) => {
+          const base = `${x.p.name} | ${x.p.supp} | ${x.p.date}`;
+          const extra =
+            x.type === "bulk"
+              ? ` | KOD:${x.p.code || "-"} | QALIQ:${x.rem}`
+              : ` | IMEI1:${x.p.imei1 || "-"} IMEI2:${x.p.imei2 || "-"} SER:${x.p.seria || "-"}`;
+          return `<option value="${x.type}:${x.p.uid}">${escapeHtml(base + extra)}</option>`;
+        })
+        .join("")
+    : `<option value="">Anbarda satılmamış mal yoxdur</option>`;
+
+  ensureAccounts();
+  const accOptions = accountOptionsHtml(current?.paymentAccountId || 1);
+
+  openModal(`
+    <h2>${isEdit ? "Satış Redaktə" : "Yeni Satış"}</h2>
+    <form onsubmit="saveSale(event, ${idx})">
+      <div class="grid-3">
+        <input type="datetime-local" id="f_s_date" value="${escapeAttr(current?.date || nowISODateTimeLocal())}" required>
+
+        <select id="f_s_type" class="span-2" onchange="toggleCreditBox()" required>
+          <option value="nagd">nagd</option>
+          <option value="post">post</option>
+          <option value="kredit">kredit</option>
+          <option value="kocurme">kocurme</option>
+        </select>
+
+        <select id="f_s_customer" class="span-2" required>${custOptions}</select>
+        <select id="f_s_staff" required>${staffOptions}</select>
+
+        <select id="f_s_item" class="span-3" ${stockItems.length ? "" : "disabled"} onchange="toggleSaleQty()" required>${itemOptions}</select>
+
+        <div id="saleQtyBox" class="grid-3 span-3" style="display:none;">
+          <input type="number" step="1" min="1" id="f_s_qty" class="span-3" placeholder="Say">
+        </div>
+
+        <input type="number" step="0.01" id="f_s_amount" class="span-2" placeholder="Ümumi məbləğ (AZN)" required oninput="recalcCredit()">
+        <div class="span-3 paybox">
+          <label class="chk">
+            <input type="checkbox" id="f_pay_now" onchange="togglePayNow()">
+            <span>Ödəniş qəbul et</span>
+          </label>
+        </div>
+
+        <div id="payNowBox" class="grid-3 span-3" style="display:none;">
+          <input type="number" step="0.01" id="f_s_paid" placeholder="Ödəniş məbləği (AZN)" value="${escapeAttr(current?.lastPayAmount ?? "0")}">
+          <select id="f_pay_acc" class="span-2">${accOptions}</select>
+        </div>
+      </div>
+
+      <div id="creditBox" class="info-block" style="display:none; margin-top:14px;">
+        <div class="grid-3">
+          <input type="number" step="1" min="1" id="f_cr_term" placeholder="Kredit müddəti (ay)" oninput="recalcCredit()">
+          <input type="number" step="0.01" min="0" id="f_cr_down" placeholder="İlkin ödəniş (AZN)" oninput="recalcCredit()">
+          <input id="f_cr_monthly" placeholder="Aylıq ödəniş (avto)" readonly>
+          <input id="f_cr_rem" class="span-3" placeholder="Qalıq (ilkindən sonra)" readonly>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">${isEdit ? "Yenilə" : "Satışı yadda saxla"}</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+
+  // Prefill select values
+  if (current) {
+    byId("f_s_type").value = current.saleType || "nagd";
+    byId("f_s_customer").value = String(current.customerId || "");
+    byId("f_s_staff").value = String(current.employeeId || "");
+    byId("f_s_amount").value = String(current.amount || "");
+
+    if (current.bulkPurchUid) {
+      byId("f_s_item").value = `bulk:${current.bulkPurchUid}`;
+      if (byId("f_s_qty")) byId("f_s_qty").value = String(current.qty || 1);
+    } else {
+      const purch = db.purch.find((p) => itemKeyFromPurch(p) === current.itemKey);
+      if (purch) byId("f_s_item").value = `serial:${purch.uid}`;
+    }
+
+    if (current.saleType === "kredit") {
+      toggleCreditBox(true);
+      byId("f_cr_term").value = String(current.credit?.termMonths || "");
+      byId("f_cr_down").value = String(current.credit?.downPayment || "");
+      recalcCredit();
+    } else {
+      toggleCreditBox(false);
+    }
+    // pay now
+    const paidTotal = n(current.paidTotal);
+    byId("f_pay_now").checked = paidTotal > 0.000001;
+    togglePayNow(true);
+    byId("f_s_paid").value = money(current.lastPayAmount ?? paidTotal);
+  } else {
+    byId("f_s_type").value = "nagd";
+    toggleCreditBox(false);
+    byId("f_pay_now").checked = false;
+    togglePayNow(true);
+  }
+  toggleSaleQty();
+}
+
+function togglePayNow(noRender) {
+  const box = byId("payNowBox");
+  const chk = byId("f_pay_now");
+  if (!box || !chk) return;
+  box.style.display = chk.checked ? "" : "none";
+  if (!chk.checked) {
+    byId("f_s_paid").value = "0";
+  } else {
+    // if credit, default to down payment
+    if (byId("f_s_type")?.value === "kredit") {
+      recalcCredit();
+    }
+  }
+  if (!noRender) return;
+}
+
+function toggleCreditBox(force) {
+  const type = byId("f_s_type")?.value;
+  const show = typeof force === "boolean" ? force : type === "kredit";
+  const box = byId("creditBox");
+  if (!box) return;
+  box.style.display = show ? "" : "none";
+  recalcCredit();
+}
+
+function recalcCredit() {
+  const type = byId("f_s_type")?.value;
+  if (type !== "kredit") return;
+  const total = Math.max(0, n(byId("f_s_amount")?.value));
+  const term = Math.max(1, Math.floor(n(byId("f_cr_term")?.value || 0)));
+  let down = Math.max(0, n(byId("f_cr_down")?.value || 0));
+  if (down > total) down = total;
+  const rem = Math.max(0, total - down);
+  const monthly = term > 0 ? rem / term : 0;
+  byId("f_cr_monthly").value = money(monthly);
+  byId("f_cr_rem").value = money(rem);
+
+  // paid default to down payment if empty/0
+  const paidEl = byId("f_s_paid");
+  if (paidEl) {
+    const cur = n(paidEl.value);
+    const auto = n(paidEl.getAttribute("data-autofill"));
+    if (cur === 0 || cur === auto) {
+      paidEl.value = money(down);
+      paidEl.setAttribute("data-autofill", String(down));
+    }
+  }
+}
+
+function saveSale(e, idx) {
+  e.preventDefault();
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const isEdit = idx !== null;
+  const isNew = !isEdit;
+
+  const customerId = val("f_s_customer");
+  const employeeId = val("f_s_staff");
+  const sel = val("f_s_item");
+  const [kind, purchUid] = String(sel || "").split(":");
+  const purch = db.purch.find((p) => String(p.uid) === String(purchUid));
+  if (!customerId || !employeeId || !purch) return;
+
+  const key = itemKeyFromPurch(purch);
+  const sold = soldKeySet();
+  let qty = 1;
+  let bulkPurchUid = null;
+  if (kind === "bulk") {
+    bulkPurchUid = purch.uid;
+    qty = Math.max(1, Math.floor(n(val("f_s_qty"))));
+    let avail = purchRemainingQty(purch);
+    if (isEdit && db.sales[idx] && String(db.sales[idx].bulkPurchUid || "") === String(bulkPurchUid)) {
+      avail += Math.max(0, Math.floor(n(db.sales[idx].qty || 0)));
+    }
+    if (qty > avail) return alert("Anbarda kifayət qədər say yoxdur.");
+  } else {
+    if (!isEdit && sold.has(key)) return alert("Bu mal artıq satılıb.");
+    if (isEdit && db.sales[idx] && db.sales[idx].itemKey !== key && sold.has(key)) return alert("Bu mal artıq satılıb.");
+  }
+
+  const saleType = val("f_s_type");
+  const amount = Math.max(0, n(val("f_s_amount")));
+  const payNow = !!byId("f_pay_now")?.checked;
+  const payAccountId = payNow ? Number(val("f_pay_acc") || 1) : null;
+  let paid = payNow ? Math.max(0, n(val("f_s_paid"))) : 0;
+  if (paid > amount) paid = amount;
+
+  const cust = db.cust.find((c) => String(c.uid) === String(customerId));
+  const staff = db.staff.find((s) => String(s.uid) === String(employeeId));
+  if (!cust || !staff) return;
+
+  // credit limit check (only for kredit)
+  if (val("f_s_type") === "kredit") {
+    const lim = Math.max(0, n(cust.creditLimit || 0));
+    if (lim > 0.000001) {
+      const existing = db.sales
+        .filter((s) => String(s.customerId) === String(cust.uid))
+        .filter((s) => String(s.saleType) === "kredit")
+        .filter((s) => !s.returnedAt)
+        .reduce((a, s) => a + saleRemaining(s), 0);
+      const newDebt = Math.max(0, n(val("f_s_amount")) - Math.max(0, n(val("f_cr_down"))));
+      const oldDebt = isEdit ? saleRemaining(db.sales[idx]) : 0;
+      const will = existing - oldDebt + newDebt;
+      if (will - lim > 0.000001) {
+        return alert(`Kredit limit aşılır. Limit: ${money(lim)} AZN, olacaq: ${money(will)} AZN`);
+      }
+    }
+  }
+
+  const base = {
+    uid: isEdit ? db.sales[idx].uid : genId(db.sales, 1),
+    invNo: isEdit ? (db.sales[idx].invNo || invFallback("sales", db.sales[idx].uid)) : nextInvNo("sales"),
+    date: val("f_s_date"),
+    saleType,
+    customerId: cust.uid,
+    customerName: `${cust.sur} ${cust.name} ${cust.father}`.trim(),
+    employeeId: staff.uid,
+    employeeName: staff.name,
+    productName: purch.name,
+    code: purch.code || "",
+    qty,
+    bulkPurchUid,
+    imei1: purch.imei1 || "",
+    imei2: purch.imei2 || "",
+    seria: purch.seria || "",
+    amount: String(amount),
+    itemKey: key,
+    payments: isEdit ? (db.sales[idx].payments || []) : [],
+    paidTotal: "0",
+    credit: null,
+    paymentAccountId: payAccountId || (isEdit ? db.sales[idx].paymentAccountId : null),
+    lastPayAmount: paid,
+  };
+
+  if (saleType === "kredit") {
+    const termMonths = Math.max(1, Math.floor(n(val("f_cr_term"))));
+    let downPayment = Math.max(0, n(val("f_cr_down")));
+    if (downPayment > amount) downPayment = amount;
+    const rem = Math.max(0, amount - downPayment);
+    const monthlyPayment = termMonths > 0 ? rem / termMonths : 0;
+    base.credit = {
+      termMonths,
+      downPayment,
+      monthlyPayment,
+    };
+    // paid becomes at least downPayment if no manual value
+    if (payNow && paid <= 0) paid = downPayment;
+  }
+
+  // If editing, preserve existing payments and recompute paidTotal, then add a "manual-set" payment only if new paid > old paidTotal
+  if (isEdit) {
+    const old = db.sales[idx];
+    base.payments = old.payments || [];
+    base.paidTotal = String(sumPayments(base.payments));
+    // allow user to set paid amount by adding payment difference
+    const diff = paid - n(base.paidTotal);
+    if (diff > 0.000001) {
+      addSalePaymentInternal(base, diff, base.date, "sales_form");
+    }
+  } else {
+    // create initial payment if paid > 0
+    if (paid > 0.000001) {
+      addSalePaymentInternal(base, paid, base.date, "sales_form");
+    } else {
+      base.paidTotal = "0";
+    }
+  }
+
+  if (isEdit) db.sales[idx] = base;
+  else db.sales.push(base);
+  logEvent(isNew ? "create" : "update", "sales", { uid: base.uid, invNo: base.invNo });
+
+  // Cash op if payNow
+  if (payNow && paid > 0.000001) {
+    if (!payAccountId) {
+      alert("Hesab seçilməyib.");
+    } else {
+      addCashOp({
+        type: "in",
+        date: base.date,
+        source: `Satış ödənişi (${base.customerName})`,
+        amount: amountAppliedToSaleLast(base) || paid,
+        note: purchIsBulk(purch)
+          ? `${base.productName} (KOD:${base.code || "-"} • SAY:${base.qty})`
+          : `${base.productName} (${base.imei1 || base.imei2 || base.seria || "-"})`,
+        link: { kind: "sale_payment", saleUid: base.uid },
+        meta: { customerId: base.customerId },
+        accountId: payAccountId,
+      });
+    }
+  }
+
+  saveDB();
+  closeMdl();
+}
+
+function sumPayments(payments) {
+  return (payments || []).reduce((a, p) => a + n(p.amount), 0);
+}
+
+function addSalePaymentInternal(sale, amount, date, source) {
+  const a = Math.max(0, n(amount));
+  if (a <= 0) return;
+  const rem = Math.max(0, n(sale.amount) - sumPayments(sale.payments));
+  const applied = Math.min(rem, a);
+  if (applied <= 0) return;
+
+  sale.payments.push({
+    uid: genId(sale.payments, 1),
+    date: date || nowISODate(),
+    amount: applied,
+    source: source || "manual",
+  });
+  sale.paidTotal = String(sumPayments(sale.payments));
+}
+
+function applyCustomerPaymentToDebts(customerId, amount, date, source) {
+  let left = Math.max(0, n(amount));
+  if (left <= 0) return { applied: 0, remaining: left, allocations: [] };
+
+  const debts = db.sales
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => String(s.customerId) === String(customerId))
+    .filter(({ s }) => saleRemaining(s) > 0.000001)
+    .sort((a, b) => (a.s.date > b.s.date ? 1 : -1));
+
+  const allocations = [];
+  for (const d of debts) {
+    if (left <= 0.000001) break;
+    const rem = saleRemaining(d.s);
+    const pay = Math.min(rem, left);
+    addSalePaymentInternal(d.s, pay, date, source);
+    allocations.push({ saleUid: d.s.uid, amount: pay });
+    left -= pay;
+  }
+
+  return { applied: n(amount) - left, remaining: left, allocations };
+}
+
+// ========= Əməkdaş hesabatı: əməkdaşın satış siyahısı (hesabat tarix aralığına görə) =========
+function openStaffReportSales(employeeUid) {
+  const staff = db.staff.find((s) => String(s.uid) === String(employeeUid));
+  const staffName = staff ? staff.name : employeeUid;
+  const repMonth = byId("repMonth")?.value || "";
+  const useMonth = !!repMonth;
+  const salesList = db.sales
+    .filter((s) => String(s.employeeId || "") === String(employeeUid))
+    .filter((s) => !s.returnedAt)
+    .filter((s) => (useMonth ? inMonth(s.date, repMonth) : inDateRange(s.date, "repFrom", "repTo")))
+    .slice()
+    .sort((a, b) => (a.date > b.date ? -1 : 1));
+  const totalSum = salesList.reduce((a, s) => a + n(s.amount), 0);
+  const totalPaid = salesList.reduce((a, s) => a + n(s.paidTotal || 0), 0);
+  const totalRem = totalSum - totalPaid;
+  const rows = salesList
+    .map((s, i) => {
+      const idx = db.sales.findIndex((x) => x.uid === s.uid);
+      const rem = saleRemaining(s);
+      const inv = s.invNo || invFallback("sales", s.uid);
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${fmtDT(s.date)}</td>
+        <td>${escapeHtml(inv)}</td>
+        <td>${escapeHtml(s.customerName)}</td>
+        <td>${escapeHtml(s.productName)}</td>
+        <td>${money(s.amount)} AZN</td>
+        <td>${money(s.paidTotal || 0)} AZN</td>
+        <td>${money(rem)} AZN</td>
+        <td class="tbl-actions"><button class="icon-btn info" onclick="closeMdl(); openSaleInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button></td>
+      </tr>`;
+    })
+    .join("");
+  openModal(`
+    <h2>Əməkdaş satışları: ${escapeHtml(staffName)}</h2>
+    <p class="muted">Hesabat tarix aralığına görə (${useMonth ? repMonth : (byId("repFrom")?.value || "") + " — " + (byId("repTo")?.value || "")})</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Tarix</th><th>Qaimə</th><th>Müştəri</th><th>Məhsul</th><th>Məbləğ</th><th>Ödənən</th><th>Qalıq</th><th></th></tr></thead>
+        <tbody>${rows || "<tr><td colspan=\"9\">Satış yoxdur</td></tr>"}</tbody>
+      </table>
+    </div>
+    <div class="info-block" style="margin-top:12px;">
+      <div class="info-row"><div class="info-label">Cəmi satış</div><div class="info-value">${money(totalSum)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Ödənilən</div><div class="info-value">${money(totalPaid)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Qalıq</div><div class="info-value">${money(totalRem)} AZN</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+// ========= Sales info + payments =========
+function openSaleInfo(idx) {
+  const s = db.sales[idx];
+  if (!s) return;
+  const cust = db.cust.find((c) => String(c.uid) === String(s.customerId));
+  const guarantor = cust?.zam ? db.cust.find((c) => String(c.uid) === String(cust.zam)) : null;
+  const key = (s.imei1 || s.imei2 || s.seria || "").trim();
+  const rem = saleRemaining(s);
+  const st = debtStatus(n(s.amount), rem);
+
+  let creditHtml = "";
+  let scheduleHtml = "";
+  if (s.saleType === "kredit" && s.credit) {
+    const sch = buildCreditSchedule(s);
+    creditHtml = `
+      <div class="info-block">
+        <div class="info-row"><div class="info-label">Kredit müddəti</div><div class="info-value">${sch.term} ay</div></div>
+        <div class="info-row"><div class="info-label">İlkin ödəniş</div><div class="info-value">${money(s.credit.downPayment)} AZN</div></div>
+        <div class="info-row"><div class="info-label">Aylıq ödəniş</div><div class="info-value">${money(s.credit.monthlyPayment)} AZN</div></div>
+        <div class="info-row"><div class="info-label">Qalıq (ilkindən sonra)</div><div class="info-value">${money(sch.remAfterDown)} AZN</div></div>
+      </div>
+    `;
+    const rows = sch.rows
+      .map(
+        (r) => `
+      <tr>
+        <td>${r.idx}</td>
+        <td>${r.due}</td>
+        <td>${money(r.amount)} AZN</td>
+        <td>${money(r.paid)} AZN</td>
+        <td>${money(r.remaining)} AZN</td>
+        <td><span class="pill ${r.status}">${debtLabel(r.status)}</span></td>
+      </tr>`
+      )
+      .join("");
+    scheduleHtml = `
+      <div class="info-block">
+        <div class="info-row"><div class="info-label">Ödəniş cədvəli</div><div class="info-value">Aylıq plan</div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Tarix</th><th>Aylıq</th><th>Ödənən</th><th>Qalıq</th><th>Status</th></tr></thead>
+            <tbody>${rows || `<tr><td colspan="6">Cədvəl yoxdur</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  openModal(`
+    <h2>Satış məlumatı</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Satış tarixi</div><div class="info-value">${escapeHtml(s.date)}</div></div>
+      <div class="info-row"><div class="info-label">Müştəri</div><div class="info-value">${escapeHtml(s.customerName)} (${s.customerId})</div></div>
+      <div class="info-row"><div class="info-label">Zamin</div><div class="info-value">${guarantor ? escapeHtml(`${guarantor.sur} ${guarantor.name} (${guarantor.uid})`) : "-"}</div></div>
+      <div class="info-row"><div class="info-label">Məhsul</div><div class="info-value">${escapeHtml(s.productName)}</div></div>
+      <div class="info-row"><div class="info-label">Kod</div><div class="info-value">${escapeHtml(s.code || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Say</div><div class="info-value">${String(Math.max(1, Math.floor(n(s.qty || 1))))}</div></div>
+      <div class="info-row"><div class="info-label">IMEI/Seriya</div><div class="info-value">${escapeHtml(key || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Satış növü</div><div class="info-value">${escapeHtml(String(s.saleType).toUpperCase())}</div></div>
+      <div class="info-row"><div class="info-label">Əməkdaş</div><div class="info-value">${escapeHtml(s.employeeName || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Məbləğ</div><div class="info-value">${money(s.amount)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Ödənilən</div><div class="info-value">${money(s.paidTotal)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Qalıq</div><div class="info-value">${money(rem)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Status</div><div class="info-value"><span class="pill ${st}">${debtLabel(st)}</span></div></div>
+    </div>
+    ${creditHtml}
+    ${scheduleHtml}
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="openSalePayment(${idx})">Ödəniş et</button>
+      <button class="btn-cancel" type="button" onclick="openReturnSale(${idx})">Qaytar</button>
+      <button class="btn-cancel" type="button" onclick="printSale(${idx})">Çap</button>
+      <button class="btn-cancel" type="button" onclick="openPaymentHistory('sale', ${idx})">Ödəniş tarixçəsi</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openPaymentHistory(kind, idx) {
+  if (kind !== "sale") return;
+  const s = db.sales[idx];
+  const rows = (s.payments || [])
+    .slice()
+    .sort((a, b) => (a.date > b.date ? -1 : 1))
+    .map(
+      (p) => `
+      <tr>
+        <td>${p.uid}</td>
+        <td>${fmtDT(p.date)}</td>
+        <td>${money(p.amount)} AZN</td>
+        <td>${escapeHtml(p.source || "")}</td>
+      </tr>`
+    )
+    .join("");
+  openModal(`
+    <h2>Ödəniş tarixçəsi</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Müştəri</div><div class="info-value">${escapeHtml(s.customerName)} (${s.customerId})</div></div>
+      <div class="info-row"><div class="info-label">Məhsul</div><div class="info-value">${escapeHtml(s.productName)}</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Tarix</th><th>Məbləğ</th><th>Mənbə</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4">Tarixçə boşdur</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="openSalePayment(${idx})">Ödəniş et</button>
+      <button class="btn-cancel" type="button" onclick="openSaleInfo(${idx})">Geri</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openSalePayment(idx) {
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const s = db.sales[idx];
+  const rem = saleRemaining(s);
+  const defAcc = Number(s.paymentAccountId || 1);
+  openModal(`
+    <h2>Ödəniş et</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Müştəri</div><div class="info-value">${escapeHtml(s.customerName)}</div></div>
+      <div class="info-row"><div class="info-label">Qalıq borc</div><div class="info-value">${money(rem)} AZN</div></div>
+    </div>
+    <form onsubmit="saveSalePayment(event, ${idx})">
+      <div class="grid-3">
+        <input type="datetime-local" id="pay_date" value="${nowISODateTimeLocal()}" required>
+        <input type="number" step="0.01" id="pay_amount" placeholder="Məbləğ (AZN)" class="span-2" required>
+        <select id="pay_acc" class="span-3" required>${accountOptionsHtml(defAcc)}</select>
+        <input id="pay_note" placeholder="Qeyd (istəyə bağlı)" class="span-3">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda saxla</button>
+        <button class="btn-cancel" type="button" onclick="openSaleInfo(${idx})">Geri</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveSalePayment(e, idx) {
+  e.preventDefault();
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const s = db.sales[idx];
+  const date = val("pay_date");
+  const amount = Math.max(0, n(val("pay_amount")));
+  const accId = Number(val("pay_acc") || 1);
+  if (amount <= 0) return;
+
+  addSalePaymentInternal(s, amount, date, "sale_info");
+
+  // Cash operation: payment into cash only if this is cash payment (assume nagd) or user pays cash from cash module.
+  // Here we treat it as cash-in (kassa) by default.
+  addCashOp({
+    type: "in",
+    date,
+    source: `Debitor ödəniş (${s.customerName})`,
+    amount: Math.min(amount, amount), // recorded amount input (even if part applied is less, adjust below)
+    note: val("pay_note") || `Satış #${s.uid}`,
+    link: { kind: "sale", saleUid: s.uid },
+    meta: { customerId: s.customerId },
+    accountId: accId,
+  }, { clampToApplied: true, applied: Math.min(amount, amountAppliedToSaleLast(s)) });
+  logEvent("create", "cash", { type: "in", kind: "sale", amount: Math.min(amount, amountAppliedToSaleLast(s)), saleUid: s.uid });
+
+  saveDB();
+  openPaymentHistory("sale", idx);
+}
+
+function amountAppliedToSaleLast(sale) {
+  const last = (sale.payments || [])[sale.payments.length - 1];
+  return last ? n(last.amount) : 0;
+}
+
+function openDebtorInfo(customerId) {
+  const items = (db.sales || [])
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => String(s.customerId) === String(customerId))
+    .sort((a, b) => String(a.s.date).localeCompare(String(b.s.date)) * -1);
+
+  const custName = items[0]?.s.customerName || customerId;
+
+  const rows = items
+    .map(({ s, idx }, i) => {
+      const rem = saleRemaining(s);
+      const st = debtStatus(n(s.amount), rem);
+      const invNo = s.invNo || invFallback("sales", s.uid);
+      const key = (s.imei1 || s.imei2 || s.seria || "").trim();
+      const payDisabled = rem <= 0.000001 ? "disabled" : "";
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(invNo)}</td>
+        <td>${fmtDT(s.date)}</td>
+        <td>${escapeHtml(s.productName)}</td>
+        <td>${escapeHtml(key || "-")}</td>
+        <td>${money(s.amount)} AZN</td>
+        <td>${money(s.paidTotal)} AZN</td>
+        <td>${money(rem)} AZN</td>
+        <td><span class="pill ${st}">${debtLabel(st)}</span></td>
+        <td class="tbl-actions">
+          <button class="icon-btn info" onclick="openSaleInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>
+          <button class="btn-mini-pay" type="button" onclick="openSalePayment(${idx})" ${payDisabled}>Ödəniş et</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  openModal(`
+    <h2>Debitor detalları</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Müştəri</div><div class="info-value">${escapeHtml(custName)}</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Qaimə</th><th>Tarix</th><th>Məhsul</th><th>IMEI/Seriya</th><th>Məbləğ</th><th>Ödənilən</th><th>Qalıq</th><th>Status</th><th>Əməliyyat</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="10">Satış yoxdur</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openDebtorPayment(customerId) {
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const rem = db.sales
+    .filter((s) => String(s.customerId) === String(customerId))
+    .reduce((a, s) => a + saleRemaining(s), 0);
+  if (rem <= 0.000001) {
+    alert("Borc yoxdur.");
+    return;
+  }
+  // pick first sale idx for existing payment UI; we'll apply across debts by customer
+  const cust = db.cust.find((c) => String(c.uid) === String(customerId));
+  openModal(`
+    <h2>Debitor ödəniş</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Müştəri</div><div class="info-value">${escapeHtml(cust ? `${cust.sur} ${cust.name}` : customerId)}</div></div>
+      <div class="info-row"><div class="info-label">Cəmi qalıq</div><div class="info-value">${money(rem)} AZN</div></div>
+    </div>
+    <form onsubmit="saveDebtorPayment(event, '${escapeAttr(customerId)}')">
+      <div class="grid-3">
+        <input type="datetime-local" id="deb_pay_date" value="${nowISODateTimeLocal()}" required>
+        <input type="number" step="0.01" id="deb_pay_amount" class="span-2" placeholder="Məbləğ (AZN)" required>
+        <select id="deb_pay_acc" class="span-3" required>${accountOptionsHtml(1)}</select>
+        <input id="deb_pay_note" class="span-3" placeholder="Qeyd (istəyə bağlı)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveDebtorPayment(e, customerId) {
+  e.preventDefault();
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const date = val("deb_pay_date");
+  const amount = Math.max(0, n(val("deb_pay_amount")));
+  const accId = Number(val("deb_pay_acc") || 1);
+  if (amount <= 0) return;
+
+  const applied = applyCustomerPaymentToDebts(customerId, amount, date, "debts_module");
+  if (applied.applied <= 0.000001) {
+    alert("Borc yoxdur.");
+    return;
+  }
+
+  // cash in
+  const cust = db.cust.find((c) => String(c.uid) === String(customerId));
+  addCashOp({
+    type: "in",
+    date,
+    source: `Müştəri ödənişi (${cust ? `${cust.sur} ${cust.name}` : customerId})`,
+    amount: applied.applied,
+    note: val("deb_pay_note") || "Debitor ödəniş",
+    link: { kind: "debtor_payment", customerId },
+    meta: { allocations: applied.allocations },
+    accountId: accId,
+  });
+
+  saveDB();
+  closeMdl();
+}
+
+// ========= Cash =========
+function addCashOp(op, opts = {}) {
+  const data = {
+    uid: genId(db.cash, 1),
+    type: op.type, // in | out
+    date: op.date || nowISODate(),
+    source: op.source || "",
+    amount: Math.max(0, n(op.amount)),
+    note: op.note || "",
+    link: op.link || null,
+    meta: op.meta || null,
+    accountId: Number(op.accountId || 1),
+  };
+  if (opts.clampToApplied && typeof opts.applied === "number") data.amount = Math.max(0, n(opts.applied));
+  if (data.amount <= 0) return;
+  db.cash.push(data);
+}
+
+function delCashOp(uid) {
+  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  const i = db.cash.findIndex((c) => Number(c.uid) === Number(uid));
+  if (i < 0) return;
+  const c = db.cash[i];
+  if (!confirm("Kassa əməliyyatı silinsin?")) return;
+  ensureAuditTrash();
+  const u = currentUser();
+  db.trash.push({ uid: genId(db.trash, 1), type: "cash", item: c, deletedAt: nowISODateTimeLocal(), deletedBy: u ? u.username : "-" });
+  logEvent("delete", "cash", { uid: c.uid, kind: c.link?.kind || "" });
+
+  // Rollback linked effects
+  const kind = c.link?.kind || "";
+
+  if (kind === "expense") {
+    // only cash record, safe to remove
+  } else if (kind === "creditor_invoice_payment") {
+    const purchUid = c.link?.purchUid;
+    const p = db.purch.find((x) => Number(x.uid) === Number(purchUid));
+    if (p) {
+      const alloc = c.meta?.allocations?.reduce((a, x) => a + n(x.amount), 0) || n(c.amount);
+      p.paidTotal = String(Math.max(0, n(p.paidTotal) - alloc));
+    }
+  } else if (kind === "creditor_payment") {
+    const allocs = c.meta?.allocations || [];
+    for (const a of allocs) {
+      const p = db.purch.find((x) => Number(x.uid) === Number(a.purchUid));
+      if (p) p.paidTotal = String(Math.max(0, n(p.paidTotal) - n(a.amount)));
+    }
+  } else if (kind === "debtor_payment") {
+    // allocations contain saleUid if applyCustomerPaymentToDebts provides it; fallback: no rollback
+    const allocs = c.meta?.allocations || [];
+    for (const a of allocs) {
+      const saleUid = a.saleUid ?? a.salesUid ?? null;
+      if (!saleUid) continue;
+      const s = db.sales.find((x) => Number(x.uid) === Number(saleUid));
+      if (!s) continue;
+      // remove one payment entry matching amount+date best-effort
+      const amt = n(a.amount);
+      const pi = (s.payments || []).findIndex((p) => n(p.amount) === amt && String(p.date) === String(c.date));
+      if (pi >= 0) s.payments.splice(pi, 1);
+      s.paidTotal = String(sumPayments(s.payments || []));
+    }
+  } else if (kind === "sale_payment") {
+    const saleUid = c.link?.saleUid;
+    const s = db.sales.find((x) => Number(x.uid) === Number(saleUid));
+    if (s) {
+      const pi = (s.payments || []).findIndex((p) => String(p.date) === String(c.date) && n(p.amount) === n(c.amount));
+      if (pi >= 0) s.payments.splice(pi, 1);
+      s.paidTotal = String(sumPayments(s.payments || []));
+    }
+  }
+
+  db.cash.splice(i, 1);
+  saveDB();
+}
+
+function cashTotals() {
+  ensureAccounts();
+  const income = db.cash.filter((c) => c.type === "in").reduce((a, b) => a + n(b.amount), 0);
+  const expense = db.cash.filter((c) => c.type === "out").reduce((a, b) => a + n(b.amount), 0);
+  const kassa = db.accounts.find((a) => a.uid === 1) ? accountBalance(1) : income - expense;
+  return { income, expense, balance: income - expense, kassa };
+}
+
+function openCashOp() {
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const custOptions = `<option value="">Müştəri seç</option>` + db.cust.map((c) => `<option value="${c.uid}">${escapeHtml(c.sur)} ${escapeHtml(c.name)} (${c.uid})</option>`).join("");
+  const suppOptions = `<option value="">Təchizatçı seç</option>` + db.supp.map((s) => `<option value="${escapeAttr(s.co)}">${escapeHtml(s.co)} (${s.uid})</option>`).join("");
+  const catOptions = db.expenseCats.map((c) => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+  const accOptions = accountOptionsHtml(1);
+
+  openModal(`
+    <h2>Yeni əməliyyat</h2>
+    <form onsubmit="saveCashOp(event)">
+      <div class="grid-3">
+        <select id="cash_kind" class="span-3" onchange="toggleCashKind()">
+          <option value="cust_pay">Müştəri ödənişi (Debitor)</option>
+          <option value="supp_pay">Təchizatçı ödənişi (Kreditor)</option>
+          <option value="expense">Xərc</option>
+        </select>
+
+        <input type="datetime-local" id="cash_date" value="${nowISODateTimeLocal()}" required>
+        <input type="number" step="0.01" id="cash_amount" class="span-2" placeholder="Məbləğ (AZN)" required>
+
+        <div class="span-3">
+          <select id="cash_acc" class="span-3" required>${accOptions}</select>
+        </div>
+
+        <div id="cash_customer_box" class="span-3">
+          <select id="cash_customer" class="span-3" required>${custOptions}</select>
+        </div>
+
+        <div id="cash_supplier_box" class="span-3" style="display:none;">
+          <div class="grid-3">
+            <select id="cash_supplier" class="span-3" onchange="refreshSupplierInvoices()">${suppOptions}</select>
+            <select id="cash_supplier_invoice" class="span-3">
+              <option value="">Qaimə seç (istəyə bağlı)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="cash_expense_box" class="span-3" style="display:none;">
+          <div class="grid-3">
+            <div class="select-plus span-2">
+              <select id="exp_cat" onchange="refreshSubcats()">${catOptions}</select>
+              <button class="mini-btn" type="button" title="Kateqoriya əlavə et" onclick="addExpenseCategory()"><i class="fas fa-plus"></i></button>
+            </div>
+            <div class="select-plus">
+              <select id="exp_sub"></select>
+              <button class="mini-btn" type="button" title="Alt kateqoriya əlavə et" onclick="addExpenseSubcategory()"><i class="fas fa-plus"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <input id="cash_note" class="span-3" placeholder="Qeyd (istəyə bağlı)">
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+
+  refreshSubcats();
+  toggleCashKind();
+}
+
+function toggleCashKind() {
+  const kind = byId("cash_kind")?.value;
+  const custBox = byId("cash_customer_box");
+  const suppBox = byId("cash_supplier_box");
+  const expBox = byId("cash_expense_box");
+  if (!custBox || !expBox) return;
+  if (kind === "expense") {
+    custBox.style.display = "none";
+    if (suppBox) suppBox.style.display = "none";
+    expBox.style.display = "";
+    byId("cash_customer").required = false;
+  } else {
+    expBox.style.display = "none";
+    if (kind === "supp_pay") {
+      custBox.style.display = "none";
+      if (suppBox) suppBox.style.display = "";
+      byId("cash_customer").required = false;
+      refreshSupplierInvoices();
+    } else {
+      custBox.style.display = "";
+      if (suppBox) suppBox.style.display = "none";
+      byId("cash_customer").required = true;
+    }
+  }
+}
+
+function refreshSupplierInvoices() {
+  const supp = byId("cash_supplier")?.value || "";
+  const sel = byId("cash_supplier_invoice");
+  if (!sel) return;
+  const inv = db.purch
+    .filter((p) => String(p.supp) === String(supp))
+    .filter((p) => purchRemaining(p) > 0.000001)
+    .sort((a, b) => (a.date > b.date ? 1 : -1))
+    .map((p) => `<option value="${p.uid}">Qaimə #${p.uid} • ${escapeHtml(p.date)} • ${escapeHtml(p.name)} • Qalıq ${money(purchRemaining(p))}</option>`)
+    .join("");
+  sel.innerHTML = `<option value="">Qaimə seç (istəyə bağlı)</option>` + inv;
+}
+
+function refreshSubcats() {
+  const catName = byId("exp_cat")?.value;
+  const cat = db.expenseCats.find((c) => c.name === catName) || db.expenseCats[0];
+  const subSel = byId("exp_sub");
+  if (!subSel) return;
+  subSel.innerHTML = (cat?.subs || []).map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("");
+}
+
+function addExpenseCategory() {
+  const name = prompt("Kateqoriya adı:");
+  if (!name) return;
+  if (db.expenseCats.some((c) => c.name.toLowerCase() === name.toLowerCase())) return alert("Bu kateqoriya var.");
+  db.expenseCats.push({ name, subs: ["Digər"] });
+  const sel = byId("exp_cat");
+  sel.innerHTML = db.expenseCats.map((c) => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+  sel.value = name;
+  refreshSubcats();
+  saveDB();
+}
+
+function addExpenseSubcategory() {
+  const catName = byId("exp_cat")?.value;
+  const cat = db.expenseCats.find((c) => c.name === catName);
+  if (!cat) return;
+  const name = prompt("Alt kateqoriya adı:");
+  if (!name) return;
+  if (cat.subs.some((s) => s.toLowerCase() === name.toLowerCase())) return alert("Bu alt kateqoriya var.");
+  cat.subs.push(name);
+  refreshSubcats();
+  byId("exp_sub").value = name;
+  saveDB();
+}
+
+function saveCashOp(e) {
+  e.preventDefault();
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const kind = val("cash_kind");
+  const date = val("cash_date");
+  const amount = Math.max(0, n(val("cash_amount")));
+  const note = val("cash_note");
+  const accId = Number(val("cash_acc") || 1);
+
+  if (amount <= 0) return;
+
+  if (kind === "expense") {
+    const bal = accountBalance(accId);
+    if (bal + 0.000001 < amount) {
+      alert("Hesab balansı kifayət etmir. Mənfiyə düşəcək.");
+      return;
+    }
+    const cat = val("exp_cat");
+    const sub = val("exp_sub");
+    addCashOp({
+      type: "out",
+      date,
+      source: `Xərc: ${cat} / ${sub}`,
+      amount,
+      note,
+      link: { kind: "expense", cat, sub },
+      accountId: accId,
+    });
+    logEvent("create", "cash", { type: "out", kind: "expense", amount });
+    saveDB();
+    closeMdl();
+    return;
+  }
+
+  if (kind === "supp_pay") {
+    const bal = accountBalance(accId);
+    if (bal + 0.000001 < amount) {
+      alert("Hesab balansı kifayət etmir. Mənfiyə düşəcək.");
+      return;
+    }
+    const supp = val("cash_supplier");
+    if (!supp) return;
+    const invoiceUid = val("cash_supplier_invoice");
+
+    if (invoiceUid) {
+      const p = db.purch.find((x) => Number(x.uid) === Number(invoiceUid));
+      if (!p) return;
+      const rem = purchRemaining(p);
+      const a = Math.min(rem, amount);
+      if (a <= 0.000001) return alert("Bu qaimənin borcu yoxdur.");
+      p.paidTotal = String(n(p.paidTotal) + a);
+
+      addCashOp({
+        type: "out",
+        date,
+        source: `Təchizatçı ödənişi (${supp})`,
+        amount: a,
+        note: note || `Qaimə #${p.uid}`,
+        link: { kind: "creditor_invoice_payment", supp, purchUid: p.uid },
+        meta: { allocations: [{ purchUid: p.uid, amount: a }] },
+        accountId: accId,
+      });
+      logEvent("create", "cash", { type: "out", kind: "creditor_invoice_payment", amount: a, purchUid: p.uid });
+
+      saveDB();
+      closeMdl();
+      return;
+    }
+
+    const applied = applySupplierPaymentToCreditor(supp, amount, date, "cash_module_creditor");
+    if (applied.applied <= 0.000001) {
+      alert("Bu təchizatçı üzrə borc yoxdur (və ya artıq ödənilib).");
+      return;
+    }
+
+    addCashOp({
+      type: "out",
+      date,
+      source: `Təchizatçı ödənişi (${supp})`,
+      amount: applied.applied,
+      note: note || "Kreditor ödəniş",
+      link: { kind: "creditor_payment", supp },
+      meta: { allocations: applied.allocations },
+      accountId: accId,
+    });
+    logEvent("create", "cash", { type: "out", kind: "creditor_payment", amount: applied.applied, supp });
+
+    saveDB();
+    closeMdl();
+    return;
+  }
+
+  // customer payment
+  const customerId = val("cash_customer");
+  const cust = db.cust.find((c) => String(c.uid) === String(customerId));
+  if (!cust) return;
+
+  const applied = applyCustomerPaymentToDebts(customerId, amount, date, "cash_module");
+  if (applied.applied <= 0.000001) {
+    alert("Bu müştərinin borcu yoxdur (və ya borc artıq ödənilib).");
+    return;
+  }
+
+  addCashOp({
+    type: "in",
+    date,
+    source: `Müştəri ödənişi (${cust.sur} ${cust.name})`,
+    amount: applied.applied,
+    note: note || `Debitor ödəniş`,
+    link: { kind: "debtor_payment", customerId },
+    meta: { allocations: applied.allocations },
+    accountId: accId,
+  });
+  logEvent("create", "cash", { type: "in", kind: "debtor_payment", amount: applied.applied, customerId });
+
+  saveDB();
+  closeMdl();
+}
+
+// ========= Debts filters =========
+function filterDebts() {
+  const q = (byId("srcDebts")?.value || "").toLowerCase();
+  document.querySelectorAll("#tblDebts tr").forEach((r) => {
+    r.style.display = r.innerText.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+function filterCreditOnly() {
+  const q = (byId("srcCreditOnly")?.value || "").toLowerCase();
+  document.querySelectorAll("#tblDebts tr").forEach((r) => {
+    const isCredit = r.getAttribute("data-sale-type") === "kredit";
+    if (!q) {
+      r.style.display = "";
+      return;
+    }
+    r.style.display = isCredit && r.innerText.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+function filterCreditor() {
+  const q = (byId("srcCred")?.value || "").toLowerCase();
+  document.querySelectorAll("#tblCreditor tr").forEach((r) => {
+    r.style.display = r.innerText.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+function applySupplierPaymentToCreditor(suppName, amount, date, source) {
+  let left = Math.max(0, n(amount));
+  if (left <= 0) return { applied: 0, remaining: left, allocations: [] };
+
+  const purchases = db.purch
+    .filter((p) => String(p.supp) === String(suppName))
+    .filter((p) => purchRemaining(p) > 0.000001)
+    .sort((a, b) => (a.date > b.date ? 1 : -1)); // oldest first
+
+  const allocations = [];
+  for (const p of purchases) {
+    if (left <= 0.000001) break;
+    const rem = purchRemaining(p);
+    const pay = Math.min(rem, left);
+    p.paidTotal = String(n(p.paidTotal) + pay);
+    allocations.push({ purchUid: p.uid, amount: pay });
+    left -= pay;
+  }
+
+  return { applied: n(amount) - left, remaining: left, allocations };
+}
+
+function openCreditorPayment(groupIdx) {
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const g = (window.__credGroups || [])[groupIdx];
+  if (!g) return;
+  const rem = g.rem;
+
+  openModal(`
+    <h2>Kreditor ödənişi</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Təchizatçı</div><div class="info-value">${escapeHtml(g.supp)}</div></div>
+      <div class="info-row"><div class="info-label">Cəmi qalıq</div><div class="info-value">${money(rem)} AZN</div></div>
+    </div>
+    <form onsubmit="saveCreditorPayment(event, ${groupIdx})">
+      <div class="grid-3">
+        <input type="datetime-local" id="cred_pay_date" value="${nowISODateTimeLocal()}" required>
+        <input type="number" step="0.01" id="cred_pay_amount" class="span-2" placeholder="Məbləğ (AZN)" required>
+        <select id="cred_pay_acc" class="span-3" required>${accountOptionsHtml(1)}</select>
+        <input id="cred_pay_note" class="span-3" placeholder="Qeyd (istəyə bağlı)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda saxla</button>
+        <button class="btn-cancel" type="button" onclick="openCreditorInfo(${groupIdx})">Geri</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveCreditorPayment(e, groupIdx) {
+  e.preventDefault();
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const g = (window.__credGroups || [])[groupIdx];
+  if (!g) return;
+
+  const date = val("cred_pay_date");
+  const amount = Math.max(0, n(val("cred_pay_amount")));
+  const accId = Number(val("cred_pay_acc") || 1);
+  if (amount <= 0) return;
+
+  const bal = accountBalance(accId);
+  if (bal + 0.000001 < amount) {
+    alert("Hesab balansı kifayət etmir. Mənfiyə düşəcək.");
+    return;
+  }
+
+  const applied = applySupplierPaymentToCreditor(g.supp, amount, date, "cash_module_creditor");
+  if (applied.applied <= 0.000001) {
+    alert("Bu təchizatçı üzrə borc yoxdur (və ya artıq ödənilib).");
+    return;
+  }
+
+  addCashOp({
+    type: "out",
+    date,
+    source: `Təchizatçı ödənişi (${g.supp})`,
+    amount: applied.applied,
+    note: val("cred_pay_note") || "Kreditor ödəniş",
+    link: { kind: "creditor_payment", supp: g.supp },
+    meta: { allocations: applied.allocations },
+    accountId: accId,
+  });
+
+  saveDB();
+  // reopen updated info (groupIdx might change after regroup; just show creditor module)
+  closeMdl();
+}
+
+function openCreditorInfo(groupIdx) {
+  const g = (window.__credGroups || [])[groupIdx];
+  if (!g) return;
+
+  const rows = g.purchases
+    .slice()
+    .sort((a, b) => (a.date > b.date ? -1 : 1))
+    .map((p) => {
+      const total = n(p.amount);
+      const paid = n(p.paidTotal);
+      const rem = purchRemaining(p);
+      const st = debtStatus(total, rem);
+      return `
+      <tr>
+        <td>${p.uid}</td>
+        <td>${fmtDT(p.date)}</td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${money(total)} AZN</td>
+        <td>${money(paid)} AZN</td>
+        <td>${money(rem)} AZN</td>
+        <td><span class="pill ${st}">${debtLabel(st)}</span></td>
+        <td class="tbl-actions">
+          <button class="btn-mini-pay" type="button" onclick="openCreditorInvoicePayment(${p.uid})">Ödəniş et</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  openModal(`
+    <h2>Kreditor detalları</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Təchizatçı</div><div class="info-value">${escapeHtml(g.supp)}</div></div>
+      <div class="info-row"><div class="info-label">Cəmi məbləğ</div><div class="info-value">${money(g.total)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Cəmi ödənilən</div><div class="info-value">${money(g.paid)} AZN</div></div>
+      <div class="info-row"><div class="info-label">Cəmi qalıq</div><div class="info-value">${money(g.rem)} AZN</div></div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Qaimə (Alış ID)</th><th>Tarix</th><th>Məhsul</th><th>Məbləğ</th><th>Ödənilən</th><th>Qalıq</th><th>Status</th><th>Ödəniş</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8">Bu təchizatçı üzrə alış yoxdur</td></tr>`}</tbody>
+      </table>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="openCreditorPayment(${groupIdx})">Ümumi ödəniş</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openCreditorInvoicePayment(purchUid) {
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const p = db.purch.find((x) => Number(x.uid) === Number(purchUid));
+  if (!p) return;
+  const rem = purchRemaining(p);
+  openModal(`
+    <h2>Qaimə ödənişi</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Təchizatçı</div><div class="info-value">${escapeHtml(p.supp)}</div></div>
+      <div class="info-row"><div class="info-label">Qaimə (Alış ID)</div><div class="info-value">${p.uid}</div></div>
+      <div class="info-row"><div class="info-label">Məhsul</div><div class="info-value">${escapeHtml(p.name)}</div></div>
+      <div class="info-row"><div class="info-label">Qalıq</div><div class="info-value">${money(rem)} AZN</div></div>
+    </div>
+    <form onsubmit="saveCreditorInvoicePayment(event, ${p.uid})">
+      <div class="grid-3">
+        <input type="datetime-local" id="inv_pay_date" value="${nowISODateTimeLocal()}" required>
+        <input type="number" step="0.01" id="inv_pay_amount" class="span-2" placeholder="Məbləğ (AZN)" required>
+        <select id="inv_pay_acc" class="span-3" required>${accountOptionsHtml(1)}</select>
+        <input id="inv_pay_note" class="span-3" placeholder="Qeyd (istəyə bağlı)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveCreditorInvoicePayment(e, purchUid) {
+  e.preventDefault();
+  if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+  const p = db.purch.find((x) => Number(x.uid) === Number(purchUid));
+  if (!p) return;
+  const date = val("inv_pay_date");
+  const amount = Math.max(0, n(val("inv_pay_amount")));
+  const accId = Number(val("inv_pay_acc") || 1);
+  if (amount <= 0) return;
+  const rem = purchRemaining(p);
+  const applied = Math.min(rem, amount);
+  if (applied <= 0.000001) return;
+
+  const bal = accountBalance(accId);
+  if (bal + 0.000001 < applied) {
+    alert("Hesab balansı kifayət etmir. Mənfiyə düşəcək.");
+    return;
+  }
+
+  p.paidTotal = String(n(p.paidTotal) + applied);
+
+  addCashOp({
+    type: "out",
+    date,
+    source: `Təchizatçı ödənişi (${p.supp})`,
+    amount: applied,
+    note: val("inv_pay_note") || `Qaimə #${p.uid}`,
+    link: { kind: "creditor_invoice_payment", supp: p.supp, purchUid: p.uid },
+    meta: { allocations: [{ purchUid: p.uid, amount: applied }] },
+    accountId: accId,
+  });
+
+  saveDB();
+  closeMdl();
+}
+
+// ========= Admin (Companies/Users/Profile) =========
+function openCompany(idx = null) {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  const c = idx !== null ? meta.companies[idx] : { id: "", name: "" };
+  openModal(`
+    <h2>${idx !== null ? "Şirkət redaktə" : "Yeni şirkət"}</h2>
+    <form onsubmit="saveCompany(event, ${idx})">
+      <div class="grid-3">
+        <input id="co_name" class="span-2" placeholder="Şirkət adı" value="${escapeHtml(c.name || "")}" required>
+        <input id="co_id" placeholder="Kod (unikal)" value="${escapeHtml(c.id || "")}" ${idx !== null ? "disabled" : ""} required>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Yarat"}</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveCompany(e, idx) {
+  e.preventDefault();
+  if (!isDeveloper()) return;
+  const name = val("co_name").trim();
+  const id = (val("co_id") || "").trim().toLowerCase();
+  if (!name || !id) return;
+  if (idx === null) {
+    if (meta.companies.some((c) => c.id === id)) return alert("Bu kodla şirkət var.");
+    meta.companies.push({ id, name });
+  } else {
+    meta.companies[idx].name = name;
+  }
+  saveMeta();
+  closeMdl();
+  renderAll();
+}
+
+function useCompany(companyId) {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  const c = meta.companies.find((x) => x.id === companyId);
+  if (!c) return;
+  meta.session.companyId = c.id;
+  saveMeta();
+  if (useFirestore()) {
+    loadCompanyDBAsync().then((data) => {
+      db = data;
+      unsubscribeRealtime();
+      subscribeRealtime();
+      renderAll();
+    });
+  } else {
+    db = loadCompanyDB();
+    renderAll();
+  }
+}
+
+function delCompany(idx) {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  const c = meta.companies[idx];
+  if (!c) return;
+  if (!confirm("Şirkət silinsin? (məlumatlar LocalStorage-da qalacaq)")) return;
+  meta.companies.splice(idx, 1);
+  if (meta.companies.length === 0) meta.companies.push({ id: "bakfon", name: "Bakfon" });
+  if (meta.session && !meta.companies.some((x) => x.id === meta.session.companyId)) {
+    meta.session.companyId = meta.companies[0].id;
+    if (useFirestore()) loadCompanyDBAsync().then((data) => { db = data; subscribeRealtime(); });
+    else db = loadCompanyDB();
+  }
+  saveMeta();
+  renderAll();
+}
+
+function resetCompanyData() {
+  if (!userCanReset()) return alert("Reset icazəsi yoxdur.");
+  const cid = meta?.session?.companyId;
+  if (!cid) return;
+  if (!confirm("Bu şirkətin bütün datası sıfırlansın?")) return;
+  const empty = defaultDB();
+  if (useFirestore()) {
+    const ref = getCompanyRef(cid);
+    if (ref) ref.set(empty).then(() => { db = empty; logEvent("reset", "company", { companyId: cid }); renderAll(); });
+  } else {
+    localStorage.setItem(companyDBKey(cid), JSON.stringify(empty));
+    db = loadCompanyDB();
+    logEvent("reset", "company", { companyId: cid });
+    renderAll();
+  }
+}
+
+function openUser(idx = null) {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  const u =
+    idx !== null
+      ? meta.users[idx]
+      : {
+          uid: genId(meta.users, 1),
+          fullName: "",
+          username: "",
+          staffUid: "",
+          pass: "",
+          role: "user",
+          active: true,
+          perms: {
+            sections: ["dash", "cust", "supp", "prod", "purch", "stock", "sales", "staff", "debts", "creditor", "cash", "accounts", "reports"],
+            canEdit: false,
+            canDelete: false,
+            canPay: false,
+            canRefund: false,
+            canExport: false,
+            canImport: false,
+            canReset: false,
+          },
+        };
+  if (!u.perms) u.perms = { sections: [], canEdit: false, canDelete: false };
+  if (typeof u.perms.canEdit !== "boolean") u.perms.canEdit = false;
+  if (typeof u.perms.canDelete !== "boolean") u.perms.canDelete = false;
+  if (typeof u.perms.canPay !== "boolean") u.perms.canPay = false;
+  if (typeof u.perms.canRefund !== "boolean") u.perms.canRefund = false;
+  if (typeof u.perms.canExport !== "boolean") u.perms.canExport = false;
+  if (typeof u.perms.canImport !== "boolean") u.perms.canImport = false;
+  if (typeof u.perms.canReset !== "boolean") u.perms.canReset = false;
+  const sections = [
+    "dash",
+    "cust",
+    "supp",
+    "prod",
+    "purch",
+    "stock",
+    "sales",
+    "staff",
+    "debts",
+    "creditor",
+    "cash",
+    "accounts",
+    "audit",
+    "trash",
+    "tools",
+    "reports",
+  ];
+  const checks = sections
+    .map((s) => {
+      const on = (u.perms?.sections || []).includes("*") || (u.perms?.sections || []).includes(s);
+      return `<label class="chk"><input type="checkbox" class="permSec" value="${s}" ${on ? "checked" : ""}><span>${escapeHtml(sectionLabelAz(s))}</span></label>`;
+    })
+    .join("");
+  openModal(`
+    <h2>${idx !== null ? "İstifadəçi redaktə" : "Yeni istifadəçi"}</h2>
+    <form onsubmit="saveUser(event, ${idx})">
+      <div class="grid-3">
+        <input id="u_full" class="span-3" placeholder="Ad Soyad" value="${escapeHtml(u.fullName || "")}" required>
+        <input id="u_name" class="span-2" placeholder="İstifadəçi adı" value="${escapeHtml(u.username || "")}" ${idx !== null ? "disabled" : ""} required>
+        <select id="u_staff" class="span-3" title="Əməkdaş">
+          <option value="">— Əməkdaş seçin —</option>
+          ${(db.staff || []).map((s) => `<option value="${s.uid}" ${String(u.staffUid || "") === String(s.uid) ? "selected" : ""}>${escapeHtml(s.name)}${s.role ? " - " + escapeHtml(s.role) : ""}</option>`).join("")}
+        </select>
+        <select id="u_role">
+          <option value="user" ${u.role === "user" ? "selected" : ""}>user</option>
+          <option value="admin" ${u.role === "admin" ? "selected" : ""}>admin</option>
+          <option value="developer" ${u.role === "developer" ? "selected" : ""}>developer</option>
+        </select>
+        <input id="u_pass" class="span-3" placeholder="Şifrə" type="password" value="${escapeHtml(u.pass || "")}" required>
+        <label class="chk span-3"><input type="checkbox" id="u_active" ${u.active ? "checked" : ""}><span>Aktiv</span></label>
+        <div class="span-3 info-block">
+          <div class="info-row">
+            <div class="info-label">İcazələr</div>
+            <div class="info-value" style="display:flex;flex-wrap:wrap;gap:12px;">
+              <label class="chk"><input type="checkbox" id="u_can_edit" ${u.perms.canEdit ? "checked" : ""}><span>Redaktə edə bilsin</span></label>
+              <label class="chk"><input type="checkbox" id="u_can_delete" ${u.perms.canDelete ? "checked" : ""}><span>Silə bilsin</span></label>
+              <label class="chk"><input type="checkbox" id="u_can_pay" ${u.perms.canPay ? "checked" : ""}><span>Ödəniş edə bilsin</span></label>
+              <label class="chk"><input type="checkbox" id="u_can_ref" ${u.perms.canRefund ? "checked" : ""}><span>Qaytarma edə bilsin</span></label>
+              <label class="chk"><input type="checkbox" id="u_can_exp" ${u.perms.canExport ? "checked" : ""}><span>Export edə bilsin</span></label>
+              <label class="chk"><input type="checkbox" id="u_can_imp" ${u.perms.canImport ? "checked" : ""}><span>Import edə bilsin</span></label>
+              <label class="chk"><input type="checkbox" id="u_can_reset" ${u.perms.canReset ? "checked" : ""}><span>Reset edə bilsin</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="span-3 info-block">
+          <div class="info-row"><div class="info-label">Bölmələr</div><div class="info-value" style="display:flex;flex-wrap:wrap;gap:10px;">${checks}</div></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Yarat"}</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveUser(e, idx) {
+  e.preventDefault();
+  if (!isDeveloper()) return;
+  const fullName = val("u_full").trim();
+  const username = val("u_name").trim();
+  const staffUid = (val("u_staff") || "").trim();
+  const pass = val("u_pass");
+  const role = val("u_role");
+  const active = !!byId("u_active")?.checked;
+  const canEdit = !!byId("u_can_edit")?.checked;
+  const canDelete = !!byId("u_can_delete")?.checked;
+  const canPay = !!byId("u_can_pay")?.checked;
+  const canRefund = !!byId("u_can_ref")?.checked;
+  const canExport = !!byId("u_can_exp")?.checked;
+  const canImport = !!byId("u_can_imp")?.checked;
+  const canReset = !!byId("u_can_reset")?.checked;
+  const sections = Array.from(document.querySelectorAll(".permSec"))
+    .filter((x) => x.checked)
+    .map((x) => x.value);
+  if (!username || !pass) return;
+  if (idx === null) {
+    if (meta.users.some((u) => u.username === username)) return alert("Bu istifadəçi adı var.");
+    meta.users.push({ uid: genId(meta.users, 1), fullName, username, staffUid: staffUid || undefined, pass, role, active, perms: { sections, canEdit, canDelete, canPay, canRefund, canExport, canImport, canReset }, createdAt: nowISODateTimeLocal() });
+  } else {
+    const keep = meta.users[idx];
+    meta.users[idx] = { ...keep, fullName, staffUid: staffUid || undefined, pass, role, active, perms: { sections, canEdit, canDelete, canPay, canRefund, canExport, canImport, canReset } };
+  }
+  saveMeta();
+  closeMdl();
+  renderAll();
+}
+
+function delUser(idx) {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  const u = meta.users[idx];
+  if (!u) return;
+  if (u.username === "developer") return alert("Developer silinə bilməz.");
+  if (!confirm("İstifadəçi silinsin?")) return;
+  meta.users.splice(idx, 1);
+  saveMeta();
+  renderAll();
+}
+
+function renderProfile() {
+  const u = currentUser();
+  const c = meta.companies.find((x) => x.id === meta?.session?.companyId);
+  const box = byId("profileBox");
+  if (!box) return;
+  if (!u) {
+    box.innerHTML = `<div class="info-row"><div class="info-label">Status</div><div class="info-value">Giriş yoxdur</div></div>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="info-row"><div class="info-label">Şirkət</div><div class="info-value">${escapeHtml(c?.name || "-")} (${escapeHtml(c?.id || "")})</div></div>
+    <div class="info-row"><div class="info-label">İstifadəçi</div><div class="info-value">${escapeHtml(u.username)}</div></div>
+    <div class="info-row"><div class="info-label">Rol</div><div class="info-value">${escapeHtml(u.role)}</div></div>
+    <div class="info-row"><div class="info-label">Şifrə</div><div class="info-value"><button class="btn-cancel" type="button" onclick="openChangePassword()">Şifrəni dəyiş</button></div></div>
+  `;
+}
+
+function openProfile() {
+  if (!meta?.session) return showLoginOverlay(true);
+  const u = currentUser();
+  const c = meta.companies.find((x) => x.id === meta?.session?.companyId);
+  if (!u) return;
+  openModal(`
+    <h2>Profil</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Şirkət</div><div class="info-value">${escapeHtml(c?.name || "-")} (${escapeHtml(c?.id || "")})</div></div>
+      <div class="info-row"><div class="info-label">İstifadəçi</div><div class="info-value">${escapeHtml(u.username)}</div></div>
+      <div class="info-row"><div class="info-label">Rol</div><div class="info-value">${escapeHtml(u.role)}</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="openChangePassword()">Şifrəni dəyiş</button>
+      <button class="btn-cancel" type="button" onclick="logout()">Çıxış</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openReturnSale(idx) {
+  if (!userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
+  const s = db.sales[idx];
+  if (!s) return;
+  if (s.returnedAt) return alert("Bu satış artıq qaytarılıb.");
+  ensureAccounts();
+  const accOptions = accountOptionsHtml(1);
+  openModal(`
+    <h2>Satışı qaytar</h2>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">Qaimə</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))}</div></div>
+      <div class="info-row"><div class="info-label">Müştəri</div><div class="info-value">${escapeHtml(s.customerName)}</div></div>
+      <div class="info-row"><div class="info-label">Məhsul</div><div class="info-value">${escapeHtml(s.productName)}</div></div>
+    </div>
+    <form onsubmit="saveReturnSale(event, ${idx})">
+      <div class="grid-3">
+        <input type="datetime-local" id="ret_date" value="${nowISODateTimeLocal()}" required>
+        <input type="number" step="0.01" id="ret_refund" class="span-2" placeholder="Geri qaytarılacaq məbləğ (AZN) (istəyə bağlı)" value="0">
+        <select id="ret_acc" class="span-3">${accOptions}</select>
+        <input id="ret_note" class="span-3" placeholder="Qeyd (istəyə bağlı)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Qaytar</button>
+        <button class="btn-cancel" type="button" onclick="openSaleInfo(${idx})">Geri</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveReturnSale(e, idx) {
+  e.preventDefault();
+  if (!userCanRefund()) return alert("Qaytarma icazəsi yoxdur.");
+  const s = db.sales[idx];
+  if (!s) return;
+  if (s.returnedAt) return;
+  const date = val("ret_date");
+  const refund = Math.max(0, n(val("ret_refund")));
+  const accId = Number(val("ret_acc") || 1);
+  const note = val("ret_note");
+  if (refund > 0.000001) {
+    if (!userCanPay()) return alert("Ödəniş icazəsi yoxdur.");
+    const bal = accountBalance(accId);
+    if (bal + 0.000001 < refund) return alert("Hesab balansı kifayət etmir.");
+    addCashOp({
+      type: "out",
+      date,
+      source: `Qaytarma (${s.customerName})`,
+      amount: refund,
+      note: note || `Satış qaytarma #${s.uid}`,
+      link: { kind: "return_refund", saleUid: s.uid },
+      meta: { saleUid: s.uid },
+      accountId: accId,
+    });
+    logEvent("create", "cash", { type: "out", kind: "return_refund", saleUid: s.uid, amount: refund });
+  }
+  s.returnedAt = date;
+  s.returnNote = note || "";
+  logEvent("return", "sales", { uid: s.uid, invNo: s.invNo || invFallback("sales", s.uid), refund });
+  saveDB();
+  openSaleInfo(idx);
+}
+
+function printSale(idx) {
+  const s = db.sales[idx];
+  if (!s) return;
+  const inv = s.invNo || invFallback("sales", s.uid);
+  const set = db.settings || defaultDB().settings;
+  const html = `
+  <html><head><title>${inv}</title>
+    <style>
+      body{font-family:Arial, sans-serif;padding:18px;}
+      h1{font-size:18px;margin:0 0 10px;}
+      .row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed #ddd;padding:6px 0;}
+      .k{font-weight:700;color:#555;}
+      .v{font-weight:700;}
+    </style>
+  </head><body>
+    <h1>${escapeHtml(set.companyName || "Şirkət")} • Satış qaiməsi • ${inv}</h1>
+    <div style="color:#555;font-weight:700;margin-bottom:10px;">
+      ${escapeHtml((set.companyAddress || "").trim())}${set.companyPhone ? " • " + escapeHtml(set.companyPhone) : ""}
+    </div>
+    <div class="row"><div class="k">Tarix</div><div class="v">${fmtDT(s.date)}</div></div>
+    <div class="row"><div class="k">Müştəri</div><div class="v">${escapeHtml(s.customerName)}</div></div>
+    <div class="row"><div class="k">Məhsul</div><div class="v">${escapeHtml(s.productName)}</div></div>
+    <div class="row"><div class="k">Kod</div><div class="v">${escapeHtml(s.code || "-")}</div></div>
+    <div class="row"><div class="k">Say</div><div class="v">${String(Math.max(1, Math.floor(n(s.qty || 1))))}</div></div>
+    <div class="row"><div class="k">IMEI/Seriya</div><div class="v">${escapeHtml((s.imei1 || s.imei2 || s.seria || "-"))}</div></div>
+    <div class="row"><div class="k">Məbləğ</div><div class="v">${money(s.amount)} ${escapeHtml(set.currency || "AZN")}</div></div>
+    <div class="row"><div class="k">Ödənilən</div><div class="v">${money(s.paidTotal)} ${escapeHtml(set.currency || "AZN")}</div></div>
+    <div class="row"><div class="k">Qalıq</div><div class="v">${money(saleRemaining(s))} ${escapeHtml(set.currency || "AZN")}</div></div>
+  </body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) return alert("Popup bloklandı.");
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+function openGlobalSearch() {
+  if (!meta?.session) return showLoginOverlay(true);
+  openModal(`
+    <h2>Qlobal axtarış</h2>
+    <div class="grid-3">
+      <input id="gs_q" class="span-3" placeholder="IMEI / Seriya / Kod / Qaimə / Ad ..." oninput="runGlobalSearch()">
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tip</th><th>Nəticə</th><th>Əməliyyat</th></tr></thead>
+        <tbody id="gs_res"><tr><td colspan="3">Axtar...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+  setTimeout(() => byId("gs_q")?.focus(), 0);
+}
+
+function runGlobalSearch() {
+  const q = (byId("gs_q")?.value || "").trim().toLowerCase();
+  const body = byId("gs_res");
+  if (!body) return;
+  if (!q) {
+    body.innerHTML = `<tr><td colspan="3">Axtar...</td></tr>`;
+    return;
+  }
+  const rows = [];
+  const push = (type, text, btn) => rows.push(`<tr><td>${escapeHtml(type)}</td><td>${escapeHtml(text)}</td><td class="tbl-actions">${btn}</td></tr>`);
+
+  db.sales.forEach((s, idx) => {
+    const inv = s.invNo || invFallback("sales", s.uid);
+    const hay = `${inv} ${s.customerName} ${s.productName} ${s.imei1} ${s.imei2} ${s.seria} ${s.code}`.toLowerCase();
+    if (hay.includes(q)) push("Satış", `${inv} • ${s.customerName} • ${s.productName}`, `<button class="icon-btn info" onclick="openSaleInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>`);
+  });
+  db.purch.forEach((p, idx) => {
+    const inv = p.invNo || invFallback("purch", p.uid);
+    const hay = `${inv} ${p.supp} ${p.name} ${p.imei1} ${p.imei2} ${p.seria} ${p.code}`.toLowerCase();
+    if (hay.includes(q)) push("Alış", `${inv} • ${p.supp} • ${p.name}`, userCanEdit() ? `<button class="icon-btn edit" onclick="openPurch(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : `<span>-</span>`);
+  });
+  db.cust.forEach((c, idx) => {
+    const hay = `${pad4(c.uid)} ${c.sur} ${c.name} ${c.father} ${c.ph1} ${c.fin}`.toLowerCase();
+    if (hay.includes(q)) push("Müştəri", `${pad4(c.uid)} • ${c.sur} ${c.name}`, `<button class="icon-btn info" onclick="openCustInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>`);
+  });
+  db.supp.forEach((s, idx) => {
+    const hay = `${s.uid} ${s.co} ${s.mob} ${s.voen}`.toLowerCase();
+    if (hay.includes(q)) push("Təchizatçı", `${s.co} (${s.uid})`, `<button class="icon-btn info" onclick="openSuppInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>`);
+  });
+
+  body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="3">Nəticə yoxdur</td></tr>`;
+}
+
+function exportCompany() {
+  if (!userCanExport()) return alert("Export icazəsi yoxdur.");
+  const cid = meta?.session?.companyId;
+  if (!cid) return;
+  const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `erp_${cid}_${nowISODate()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  logEvent("export", "company", { companyId: cid });
+}
+
+function importCompany(ev) {
+  if (!userCanImport()) return alert("Import icazəsi yoxdur.");
+  const f = ev.target.files?.[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const parsed = JSON.parse(String(r.result || "{}"));
+      db = { ...defaultDB(), ...parsed };
+      saveDB();
+      logEvent("import", "company", { companyId: meta?.session?.companyId || "-" });
+      alert("Import olundu.");
+    } catch {
+      alert("JSON oxunmadı.");
+    }
+  };
+  r.readAsText(f);
+  ev.target.value = "";
+}
+
+function recalcAll() {
+  if (!userCanReset()) return alert("Recalculate icazəsi yoxdur.");
+  // recompute sales paidTotal from payments
+  for (const s of db.sales) {
+    s.paidTotal = String(sumPayments(s.payments || []));
+  }
+  // clamp purchase paidTotal
+  for (const p of db.purch) {
+    p.paidTotal = String(Math.max(0, n(p.paidTotal)));
+  }
+  logEvent("recalc", "tools", {});
+  saveDB();
+  alert("Yenidən hesablandı.");
+}
+
+function openQrTool() {
+  openModal(`
+    <h2>QR</h2>
+    <div class="grid-3">
+      <input id="qr_txt" class="span-3" placeholder="Mətn / Kod / IMEI / Seriya...">
+    </div>
+    <div class="info-block">
+      <div class="info-row"><div class="info-label">QR</div><div class="info-value"><canvas id="qr_canvas"></canvas></div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-main" type="button" onclick="genQr()">Yarat</button>
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
+function openSettings() {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  ensureAuditTrash();
+  const s = db.settings || defaultDB().settings;
+  openModal(`
+    <h2>Ayarlar</h2>
+    <form onsubmit="saveSettings(event)">
+      <div class="grid-3">
+        <input id="set_name" class="span-3" placeholder="Şirkət adı" value="${escapeHtml(s.companyName || "")}" required>
+        <input id="set_addr" class="span-3" placeholder="Ünvan" value="${escapeHtml(s.companyAddress || "")}">
+        <input id="set_phone" class="span-2" placeholder="Telefon" value="${escapeHtml(s.companyPhone || "")}">
+        <input id="set_curr" placeholder="Valyuta (AZN)" value="${escapeHtml(s.currency || "AZN")}">
+        <input id="set_sym" class="span-2" placeholder="Simvol (₼)" value="${escapeHtml(s.currencySymbol || "₼")}">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yadda saxla</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function saveSettings(e) {
+  e.preventDefault();
+  if (!isDeveloper()) return;
+  ensureAuditTrash();
+  db.settings = {
+    companyName: val("set_name").trim(),
+    companyAddress: val("set_addr").trim(),
+    companyPhone: val("set_phone").trim(),
+    currency: val("set_curr").trim() || "AZN",
+    currencySymbol: val("set_sym").trim() || "₼",
+  };
+  logEvent("update", "settings", {});
+  saveDB();
+  closeMdl();
+}
+
+function genQr() {
+  const t = (byId("qr_txt")?.value || "").trim();
+  const canvas = byId("qr_canvas");
+  if (!t || !canvas) return;
+  if (!window.QRCode) return alert("QR kitabxanası yüklənmədi.");
+  window.QRCode.toCanvas(canvas, t, { width: 220 }, (err) => {
+    if (err) alert("QR alınmadı.");
+  });
+}
+
+function exportTableToCsv(tableBodyId, filename) {
+  const tbody = byId(tableBodyId);
+  if (!tbody) return alert("Cədvəl tapılmadı.");
+  const table = tbody.closest("table");
+  if (!table) return;
+  const rows = Array.from(table.querySelectorAll("tr"));
+  const csv = rows
+    .map((r) =>
+      Array.from(r.querySelectorAll("th,td"))
+        .map((c) => `"${String(c.innerText || "").replaceAll('"', '""').trim()}"`)
+        .join(",")
+    )
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function activeSectionId() {
+  const sec = document.querySelector(".section.active");
+  return sec ? sec.id : "dash";
+}
+
+function exportCsvCurrent() {
+  if (!userCanExport()) return alert("Export icazəsi yoxdur.");
+  const sid = activeSectionId();
+  const map = {
+    cust: "tblCust",
+    supp: "tblSupp",
+    prod: "tblProd",
+    purch: "tblPurch",
+    stock: "tblStock",
+    sales: "tblSales",
+    staff: "tblStaff",
+    debts: "tblDebts",
+    creditor: "tblCreditor",
+    cash: "tblCash",
+    accounts: "tblAccounts",
+    companies: "tblCompanies",
+    users: "tblUsers",
+    audit: "tblAudit",
+    trash: "tblTrash",
+    reports: "tblPayroll",
+  };
+  const bodyId = map[sid];
+  if (!bodyId) return alert("Bu bölmə üçün CSV yoxdur.");
+  const cid = meta?.session?.companyId || "company";
+  exportTableToCsv(bodyId, `csv_${cid}_${sid}_${nowISODate()}.csv`);
+  logEvent("export", "csv", { section: sid });
+  toast("CSV yükləndi", "ok");
+}
+
+function clearAudit() {
+  if (!userCanReset()) return alert("İcazə yoxdur.");
+  if (!confirm("Audit təmizlənsin?")) return;
+  db.audit = [];
+  saveDB();
+}
+
+function emptyTrash() {
+  if (!userCanReset()) return alert("İcazə yoxdur.");
+  if (!confirm("Səbət tam boşaldılsın?")) return;
+  db.trash = [];
+  saveDB();
+}
+
+function restoreTrash(uid) {
+  if (!userCanEdit()) return alert("İcazə yoxdur.");
+  const i = db.trash.findIndex((t) => Number(t.uid) === Number(uid));
+  if (i < 0) return;
+  const t = db.trash[i];
+  const it = t.item;
+  if (t.type === "cust") db.cust.push(it);
+  else if (t.type === "supp") db.supp.push(it);
+  else if (t.type === "prod") db.prod.push(it);
+  else if (t.type === "staff") db.staff.push(it);
+  else if (t.type === "purch") db.purch.push(it);
+  else if (t.type === "sales") db.sales.push(it);
+  else if (t.type === "cash") db.cash.push(it);
+  db.trash.splice(i, 1);
+  logEvent("restore", "trash", { type: t.type });
+  saveDB();
+}
+
+function deleteTrash(uid) {
+  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  const i = db.trash.findIndex((t) => Number(t.uid) === Number(uid));
+  if (i < 0) return;
+  if (!confirm("Səbətdən tam silinsin?")) return;
+  db.trash.splice(i, 1);
+  logEvent("delete", "trash", { uid });
+  saveDB();
+}
+function openChangePassword() {
+  const u = currentUser();
+  if (!u) return;
+  openModal(`
+    <h2>Şifrəni dəyiş</h2>
+    <form onsubmit="changePassword(event)">
+      <div class="grid-3">
+        <input id="pw_old" class="span-3" placeholder="Köhnə şifrə" type="password" required>
+        <input id="pw_new" class="span-3" placeholder="Yeni şifrə" type="password" required>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-main" type="submit">Yenilə</button>
+        <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+      </div>
+    </form>
+  `);
+}
+
+function changePassword(e) {
+  e.preventDefault();
+  const u = currentUser();
+  if (!u) return;
+  const old = val("pw_old");
+  const nw = val("pw_new");
+  if (u.pass !== old) return alert("Köhnə şifrə yanlışdır.");
+  const idx = meta.users.findIndex((x) => x.uid === u.uid);
+  if (idx < 0) return;
+  meta.users[idx].pass = nw;
+  saveMeta();
+  closeMdl();
+  renderProfile();
+}
+
+// ========= Render =========
+function renderAll() {
+  if (!meta.session) {
+    showLoginOverlay(true);
+    applyAccessUI();
+    return;
+  }
+  showLoginOverlay(false);
+  applyAccessUI();
+  const activeSec = document.querySelector(".section.active");
+  if (activeSec && byId("appHeaderTitle")) byId("appHeaderTitle").textContent = sectionLabelAz(activeSec.id);
+  const sold = soldKeySet();
+
+  // customers
+  const custList = db.cust
+    .map((c, idx) => ({ c, idx }))
+    .filter(({ c }) => inDateRange(c.createdAt || c.date, "custFrom", "custTo"))
+    .slice()
+    .sort((a, b) => String(a.c.createdAt || a.c.date || "").localeCompare(String(b.c.createdAt || b.c.date || "")) * -1);
+  byId("tblCust").innerHTML = custList
+    .map(({ c, idx }, i) => {
+      const guarantor = c.zam ? db.cust.find((x) => String(x.uid) === String(c.zam)) : null;
+      const canE = userCanEdit();
+      const canD = userCanDelete();
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${pad4(c.uid)}</td>
+        <td>${escapeHtml(`${c.sur} ${c.name} ${c.father}`.trim())}</td>
+        <td>${escapeHtml(c.ph1)}</td>
+        <td>${escapeHtml(c.fin)}</td>
+        <td>${escapeHtml(c.seriaNum)}</td>
+        <td>${guarantor ? escapeHtml(`${guarantor.sur} ${guarantor.name}`) : "-"}</td>
+        <td class="tbl-actions">
+          <button class="icon-btn info" onclick="openCustInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>
+          ${canE ? `<button class="icon-btn edit" onclick="openCust(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+          ${canD ? `<button class="icon-btn delete" onclick="delItem('cust', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  // suppliers
+  const suppList = db.supp
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => inDateRange(s.createdAt || s.date, "suppFrom", "suppTo"))
+    .slice()
+    .sort((a, b) => String(a.s.createdAt || a.s.date || "").localeCompare(String(b.s.createdAt || b.s.date || "")) * -1);
+  byId("tblSupp").innerHTML = suppList
+    .map(
+      ({ s, idx }, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${s.uid}</td>
+      <td>${escapeHtml(s.co)}</td>
+      <td>${escapeHtml(s.per || "-")}</td>
+      <td>${escapeHtml(s.mob || "-")}</td>
+      <td>${escapeHtml(s.voen || "-")}</td>
+      <td class="tbl-actions">
+        <button class="icon-btn info" onclick="openSuppInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>
+        ${userCanEdit() ? `<button class="icon-btn edit" onclick="openSupp(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('supp', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+      </td>
+    </tr>`
+    )
+    .join("");
+
+  // products
+  const prodList = db.prod
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => inDateRange(p.createdAt || p.date, "prodFrom", "prodTo"))
+    .slice()
+    .sort((a, b) => String(a.p.createdAt || a.p.date || "").localeCompare(String(b.p.createdAt || b.p.date || "")) * -1);
+  byId("tblProd").innerHTML = prodList
+    .map(
+      ({ p, idx }, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${escapeHtml(p.name)}</td>
+      <td>${escapeHtml(p.cat || "-")}</td>
+      <td>${escapeHtml(p.subCat || "-")}</td>
+      <td class="tbl-actions">
+        ${userCanEdit() ? `<button class="icon-btn edit" onclick="openProd(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('prod', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+      </td>
+    </tr>`
+    )
+    .join("");
+
+  // purchases (latest first) + date filter + pagination
+  const purchListAll = db.purch
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => inDateRange(p.date, "purchFrom", "purchTo"))
+    .sort((a, b) => String(a.p.date).localeCompare(String(b.p.date)) * -1);
+
+  const purchPageSize = getPageSize("purchPageSize", 50);
+  const purchList = paginate(purchListAll, "purch", purchPageSize, "purchPageInfo");
+
+  byId("tblPurch").innerHTML = purchList
+    .map(({ p, idx }, i) => {
+      const rem = purchRemaining(p);
+      const actions = `
+        ${userCanEdit() ? `<button class="icon-btn edit" onclick="openPurch(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('purch', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+      `;
+      const invNo = p.invNo || invFallback("purch", p.uid);
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(invNo)}</td>
+        <td>${fmtDT(p.date)}</td>
+        <td>${escapeHtml(p.supp)}</td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.code || "")}</td>
+        <td>${purchIsBulk(p) ? String(Math.max(1, Math.floor(n(p.qty || 1)))) : ""}</td>
+        <td>${escapeHtml(p.imei1 || "")}</td>
+        <td>${escapeHtml(p.imei2 || "")}</td>
+        <td>${escapeHtml(p.seria || "")}</td>
+        <td>${money(p.amount)} AZN</td>
+        <td>${money(p.paidTotal)} AZN</td>
+        <td>${money(rem)} AZN</td>
+        <td class="tbl-actions">${actions}</td>
+      </tr>`;
+    })
+    .join("");
+
+  // stock
+  byId("tblStock").innerHTML = purchListAll
+    .slice(0, 2000) /* safety */
+    .map(({ p }, i) => {
+      const key = itemKeyFromPurch(p);
+      const remQty = purchRemainingQty(p);
+      const isSold = remQty <= 0;
+      const statusText = isSold ? "SATILIB" : "ANBARDA";
+      const rowClass = isSold ? "row-sold" : "row-stock";
+      const badgeClass = isSold ? "badge-sold" : "badge-stock";
+      return `
+      <tr class="${rowClass}">
+        <td>${i + 1}</td>
+        <td><span class="status-badge ${badgeClass}">${statusText}</span></td>
+        <td>${fmtDT(p.date)}</td>
+        <td>${escapeHtml(p.supp)}</td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.code || "")}</td>
+        <td>${purchIsBulk(p) ? String(remQty) : ""}</td>
+        <td>${escapeHtml(p.imei1 || "")}</td>
+        <td>${escapeHtml(p.imei2 || "")}</td>
+        <td>${escapeHtml(p.seria || "")}</td>
+        <td>${money(p.amount)} AZN</td>
+      </tr>`;
+    })
+    .join("");
+
+  // sales + date filter + pagination
+  const salesListAll = db.sales
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => inDateRange(s.date, "salesFrom", "salesTo"))
+    .sort((a, b) => String(a.s.date).localeCompare(String(b.s.date)) * -1);
+
+  const salesPageSize = getPageSize("salesPageSize", 50);
+  const salesList = paginate(salesListAll, "sales", salesPageSize, "salesPageInfo");
+
+  byId("tblSales").innerHTML = salesList
+    .map(({ s, idx }, i) => {
+      const rem = saleRemaining(s);
+      const invNo = s.invNo || invFallback("sales", s.uid);
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(invNo)}</td>
+        <td>${fmtDT(s.date)}</td>
+        <td>${escapeHtml(s.customerName)}</td>
+        <td>${escapeHtml(s.productName)}</td>
+        <td>${escapeHtml(s.code || "")}</td>
+        <td>${String(Math.max(1, Math.floor(n(s.qty || 1))))}</td>
+        <td>${escapeHtml(s.imei1 || "")}</td>
+        <td>${escapeHtml(s.imei2 || "")}</td>
+        <td>${escapeHtml(s.seria || "")}</td>
+        <td>${escapeHtml(String(s.saleType).toUpperCase())}</td>
+        <td>${escapeHtml(s.employeeName || "")}</td>
+        <td>${money(s.amount)} AZN</td>
+        <td>${money(s.paidTotal)} AZN</td>
+        <td>${money(rem)} AZN</td>
+        <td class="tbl-actions">
+          <button class="icon-btn info" onclick="openSaleInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>
+          ${userCanEdit() ? `<button class="icon-btn edit" onclick="openSale(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+          ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('sales', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  // staff
+  const staffList = db.staff
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => inDateRange(s.createdAt || s.date, "staffFrom", "staffTo"))
+    .slice()
+    .sort((a, b) => String(a.s.createdAt || a.s.date || "").localeCompare(String(b.s.createdAt || b.s.date || "")) * -1);
+  byId("tblStaff").innerHTML = staffList
+    .map(
+      ({ s, idx }, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${s.uid}</td>
+      <td>${escapeHtml(s.name)}</td>
+      <td>${escapeHtml(s.role || "-")}</td>
+      <td>${escapeHtml(s.phone || "-")}</td>
+      <td>${money(s.baseSalary || 0)} AZN</td>
+      <td>${money(s.commPct || 0)}%</td>
+      <td class="tbl-actions">
+        ${userCanEdit() ? `<button class="icon-btn edit" onclick="openStaff(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('staff', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+      </td>
+    </tr>`
+    )
+    .join("");
+
+  // debts (debitor) grouped by customer + date filter + pagination
+  const debtsStatus = byId("debtsStatus")?.value || "all";
+  const debtsAll = db.sales
+    .filter((s) => inDateRange(s.date, "debtsFrom", "debtsTo"))
+    .map((s, saleIdx) => {
+      const total = n(s.amount);
+      const rem = saleRemaining(s);
+      const st = debtStatus(total, rem);
+      return { s, saleIdx, total, rem, st };
+    });
+
+  const groupMap = new Map();
+  for (const x of debtsAll) {
+    const key = String(x.s.customerId);
+    if (!groupMap.has(key)) groupMap.set(key, []);
+    groupMap.get(key).push(x);
+  }
+  const groups = Array.from(groupMap.entries()).map(([customerId, items]) => {
+    const total = items.reduce((a, t) => a + t.total, 0);
+    const rem = items.reduce((a, t) => a + t.rem, 0);
+    const paid = total - rem;
+    const st = debtStatus(total, rem);
+    return { customerId, customerName: items[0]?.s.customerName || customerId, total, paid, rem, st, items };
+  });
+
+  const groupsFiltered = groups.filter((g) => (debtsStatus === "all" ? true : g.st === debtsStatus));
+  groupsFiltered.sort((a, b) => (a.rem < b.rem ? 1 : -1));
+
+  window.__debtorGroups = groupsFiltered;
+  const debtsPageSize = getPageSize("debtsPageSize", 50);
+  const groupsPage = paginate(groupsFiltered, "debts", debtsPageSize, "debtsPageInfo");
+
+  byId("tblDebts").innerHTML = groupsPage
+    .map((g, i) => {
+      const payDisabled = g.rem <= 0.000001 ? "disabled" : "";
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(g.customerName)}</td>
+        <td>${money(g.total)} AZN</td>
+        <td>${money(g.paid)} AZN</td>
+        <td>${money(g.rem)} AZN</td>
+        <td><span class="pill ${g.st}">${debtLabel(g.st)}</span></td>
+        <td class="tbl-actions">
+          <button class="icon-btn info" onclick="openDebtorInfo('${escapeAttr(g.customerId)}')" title="Info"><i class="fas fa-circle-info"></i></button>
+          <button class="btn-mini-pay" type="button" onclick="openDebtorPayment('${escapeAttr(g.customerId)}')" ${payDisabled}>Ödəniş et</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  filterDebts();
+  const creditQ = byId("srcCreditOnly")?.value || "";
+  if (creditQ) filterCreditOnly();
+
+  // creditor (suppliers) + date filter + pagination
+  const credStatus = byId("credStatus")?.value || "open";
+  const groupsMap = new Map();
+  for (const p of db.purch.filter((p) => inDateRange(p.date, "credFrom", "credTo"))) {
+    const supp = p.supp || "(Seçilməyib)";
+    if (!groupsMap.has(supp)) groupsMap.set(supp, []);
+    groupsMap.get(supp).push(p);
+  }
+
+  const credGroups = Array.from(groupsMap.entries()).map(([supp, purchases]) => {
+    const total = purchases.reduce((a, x) => a + n(x.amount), 0);
+    const paid = purchases.reduce((a, x) => a + n(x.paidTotal), 0);
+    const rem = purchases.reduce((a, x) => a + purchRemaining(x), 0);
+    const st = debtStatus(total, rem);
+    return { supp, purchases, total, paid, rem, st };
+  });
+
+  // expose groups for info modal
+  window.__credGroups = credGroups;
+
+  const filteredGroupsAll = credGroups.filter((g) => {
+    if (credStatus === "all") return true;
+    if (credStatus === "open") return g.st !== "paid";
+    return g.st === credStatus;
+  });
+
+  const credPageSize = getPageSize("credPageSize", 50);
+  const filteredGroups = paginate(filteredGroupsAll, "cred", credPageSize, "credPageInfo");
+
+  byId("tblCreditor").innerHTML = filteredGroups
+    .map(
+      (g, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${escapeHtml(g.supp)}</td>
+      <td>${money(g.total)} AZN</td>
+      <td>${money(g.paid)} AZN</td>
+      <td>${money(g.rem)} AZN</td>
+      <td><span class="pill ${g.st}">${debtLabel(g.st)}</span></td>
+      <td class="tbl-actions">
+        <button class="icon-btn info" onclick="openCreditorInfo(${credGroups.indexOf(g)})" title="Info"><i class="fas fa-circle-info"></i></button>
+      </td>
+    </tr>`
+    )
+    .join("");
+  filterCreditor();
+
+  // cash list + filters + pagination
+  fillCashAccountSelect();
+  const cashType = byId("cashType")?.value || "all";
+  const cashAccId = getSelectedCashAccountId();
+  const cashRowsAll = db.cash
+    .filter((c) => (cashType === "all" ? true : c.type === cashType))
+    .filter((c) => (cashAccId ? Number(c.accountId || 1) === Number(cashAccId) : true))
+    .filter((c) => inDateRange(c.date, "cashFrom", "cashTo"))
+    .slice()
+    .sort((a, b) => (a.date > b.date ? -1 : 1));
+
+  const cashPageSize = getPageSize("cashPageSize", 50);
+  const cashRows = paginate(cashRowsAll, "cash", cashPageSize, "cashPageInfo");
+
+  byId("tblCash").innerHTML = cashRows
+    .map(
+      (c, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${c.type === "in" ? "Gəlir" : "Xərc"}</td>
+      <td>${fmtDT(c.date)}</td>
+      <td>${escapeHtml(c.source)}</td>
+      <td class="${c.type === "in" ? "amt-in" : "amt-out"}">${c.type === "in" ? "+" : "-"}${money(c.amount)} AZN</td>
+      <td>${escapeHtml(c.note || "")}</td>
+      <td class="tbl-actions">
+        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delCashOp(${c.uid})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+      </td>
+    </tr>`
+    )
+    .join("");
+
+  const incomeF = cashRowsAll.filter((c) => c.type === "in").reduce((a, b) => a + n(b.amount), 0);
+  const expenseF = cashRowsAll.filter((c) => c.type === "out").reduce((a, b) => a + n(b.amount), 0);
+  byId("cashIn").innerText = money(incomeF);
+  byId("cashOut").innerText = money(expenseF);
+  byId("cashBal").innerText = money(incomeF - expenseF);
+
+  // accounts
+  ensureAccounts();
+  byId("tblAccounts").innerHTML = db.accounts
+    .map((a, i) => {
+      const bal = accountBalance(a.uid);
+      const delDisabled = a.uid === 1 ? "disabled" : "";
+      return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(a.name)}</td>
+        <td>${escapeHtml(a.type)}</td>
+        <td>${money(bal)} AZN</td>
+        <td class="tbl-actions">
+          ${userCanEdit() ? `<button class="icon-btn edit" onclick="openAccount(${i})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
+          ${userCanDelete() ? `<button class="icon-btn delete" onclick="delAccount(${i})" title="Sil" ${delDisabled}><i class="fas fa-trash"></i></button>` : ""}
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  // companies (developer only)
+  const compBody = byId("tblCompanies");
+  if (compBody) {
+    const curCid = meta?.session?.companyId;
+    compBody.innerHTML = meta.companies
+      .map((c, i) => {
+        const active = c.id === curCid;
+        return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${escapeHtml(c.name)}</td>
+          <td>${escapeHtml(c.id)}</td>
+          <td>${active ? '<span class="pill paid">AKTİV</span>' : "-"}</td>
+          <td class="tbl-actions">
+            <button class="btn-mini-pay" type="button" onclick="useCompany('${escapeAttr(c.id)}')" ${active ? "disabled" : ""}>Seç</button>
+            <button class="icon-btn edit" onclick="openCompany(${i})" title="Edit"><i class="fas fa-pen"></i></button>
+            <button class="icon-btn delete" onclick="delCompany(${i})" title="Sil"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  // users (developer only)
+  const userBody = byId("tblUsers");
+  if (userBody) {
+    userBody.innerHTML = meta.users
+      .slice()
+      .sort((a, b) => String(a.username).localeCompare(String(b.username)))
+      .map((u, i) => {
+        const me = Number(u.uid) === Number(meta?.session?.userUid);
+        const staffUid = u.staffUid != null && u.staffUid !== "" ? String(u.staffUid) : null;
+        const staffName = staffUid && db.staff ? (db.staff.find((s) => String(s.uid) === staffUid)?.name || "-") : "-";
+        return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${escapeHtml(u.fullName || "-")}</td>
+          <td>${escapeHtml(u.username)}${me ? " (siz)" : ""}</td>
+          <td>${escapeHtml(staffName)}</td>
+          <td>${escapeHtml(u.role || "user")}</td>
+          <td>${u.active ? "Aktiv" : "Deaktiv"}</td>
+          <td class="tbl-actions">
+            <button class="icon-btn edit" onclick="openUser(${meta.users.findIndex((x) => x.uid === u.uid)})" title="Edit"><i class="fas fa-pen"></i></button>
+            <button class="icon-btn delete" onclick="delUser(${meta.users.findIndex((x) => x.uid === u.uid)})" title="Sil"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  // audit
+  ensureAuditTrash();
+  const auditBody = byId("tblAudit");
+  if (auditBody) {
+    const list = db.audit
+      .filter((a) => inDateRange(a.ts, "auditFrom", "auditTo"))
+      .slice()
+      .sort((a, b) => (a.ts > b.ts ? -1 : 1));
+    auditBody.innerHTML = list
+      .map((a, i) => {
+        return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${fmtDT(a.ts)}</td>
+          <td>${escapeHtml(a.user || "-")}</td>
+          <td>${escapeHtml(a.action || "-")}</td>
+          <td>${escapeHtml(a.target || "-")}</td>
+          <td><button class="btn-mini-pay" type="button" onclick="openAuditDetails(${a.uid})">Bax</button></td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  // trash
+  const trashBody = byId("tblTrash");
+  if (trashBody) {
+    const list = (db.trash || []).slice().sort((a, b) => (a.deletedAt > b.deletedAt ? -1 : 1));
+    trashBody.innerHTML = list
+      .map((t, i) => {
+        const name =
+          t.type === "cust"
+            ? `${t.item?.sur || ""} ${t.item?.name || ""}`
+            : t.type === "supp"
+              ? t.item?.co || "-"
+              : t.type === "prod"
+                ? t.item?.name || "-"
+                : t.type === "purch"
+                  ? (t.item?.invNo || invFallback("purch", t.item?.uid)) + " • " + (t.item?.name || "-")
+                  : t.type === "sales"
+                    ? (t.item?.invNo || invFallback("sales", t.item?.uid)) + " • " + (t.item?.customerName || "-")
+                    : t.type === "cash"
+                      ? `Cash #${t.item?.uid}`
+                      : "-";
+        return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${fmtDT(t.deletedAt)}</td>
+          <td>${escapeHtml(t.type)}</td>
+          <td>${escapeHtml(name)}</td>
+          <td>${escapeHtml(t.deletedBy || "-")}</td>
+          <td class="tbl-actions">
+            ${userCanEdit() ? `<button class="btn-mini-pay" type="button" onclick="restoreTrash(${t.uid})">Bərpa</button>` : ""}
+            ${userCanDelete() ? `<button class="icon-btn delete" onclick="deleteTrash(${t.uid})" title="Tam sil"><i class="fas fa-trash"></i></button>` : ""}
+          </td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  // profile
+  renderProfile();
+
+  // reports (P&L)
+  const repSalesEl = byId("repSales");
+  if (repSalesEl) {
+    const repMonth = byId("repMonth")?.value || "";
+    const repView = byId("repView")?.value || "summary";
+    const useMonth = !!repMonth;
+
+    const salesInRange = db.sales
+      .filter((s) => (useMonth ? inMonth(s.date, repMonth) : inDateRange(s.date, "repFrom", "repTo")))
+      .filter((s) => !s.returnedAt);
+    const salesTotal = salesInRange.reduce((a, s) => a + n(s.amount), 0);
+    const cogs = salesInRange.reduce((a, s) => {
+      if (s.bulkPurchUid) {
+        const p = db.purch.find((x) => String(x.uid) === String(s.bulkPurchUid));
+        const unit = p ? n(p.amount) / Math.max(1, Math.floor(n(p.qty || 1))) : 0;
+        return a + unit * Math.max(1, Math.floor(n(s.qty || 1)));
+      }
+      const p = db.purch.find((x) => itemKeyFromPurch(x) === s.itemKey);
+      return a + (p ? n(p.amount) : 0);
+    }, 0);
+    const exp = db.cash
+      .filter((c) => c.type === "out")
+      .filter((c) => c.link && c.link.kind === "expense")
+      .filter((c) => (useMonth ? inMonth(c.date, repMonth) : inDateRange(c.date, "repFrom", "repTo")))
+      .reduce((a, c) => a + n(c.amount), 0);
+    const hasPeriod = useMonth || (byId("repFrom")?.value || "").trim() || (byId("repTo")?.value || "").trim();
+    const byEmpForPayroll = new Map();
+    for (const s of salesInRange) {
+      const empId = String(s.employeeId || "");
+      if (!empId) continue;
+      byEmpForPayroll.set(empId, (byEmpForPayroll.get(empId) || 0) + n(s.amount));
+    }
+    let payrollTotalPeriod = 0;
+    if (hasPeriod) {
+      for (const st of db.staff || []) {
+        const salesEmp = byEmpForPayroll.get(String(st.uid)) || 0;
+        const pct = Math.max(0, n(st.commPct || 0));
+        const base = Math.max(0, n(st.baseSalary || 0));
+        payrollTotalPeriod += base + salesEmp * (pct / 100);
+      }
+    }
+    const pl = salesTotal - cogs - exp;
+    byId("repSales").innerText = money(salesTotal);
+    byId("repCogs").innerText = money(cogs);
+    byId("repExp").innerText = money(exp);
+    const repPayrollEl = byId("repPayroll");
+    if (repPayrollEl) repPayrollEl.innerText = money(payrollTotalPeriod);
+    byId("repPL").innerText = money(pl);
+
+    // month detailed list
+    const head = byId("repListHead");
+    const body = byId("tblRepList");
+    if (head && body) {
+      if (repView === "sales") {
+        head.innerHTML = `<tr><th>#</th><th>Tarix</th><th>Qaimə</th><th>Müştəri</th><th>Məhsul</th><th>Məbləğ</th><th>Info</th></tr>`;
+        const rows = salesInRange
+          .slice()
+          .sort((a, b) => (a.date > b.date ? -1 : 1))
+          .map((s, i) => {
+            const idx = db.sales.findIndex((x) => x.uid === s.uid);
+            const inv = s.invNo || invFallback("sales", s.uid);
+            return `
+            <tr>
+              <td>${i + 1}</td>
+              <td>${fmtDT(s.date)}</td>
+              <td>${escapeHtml(inv)}</td>
+              <td>${escapeHtml(s.customerName)}</td>
+              <td>${escapeHtml(s.productName)}</td>
+              <td>${money(s.amount)} AZN</td>
+              <td class="tbl-actions"><button class="icon-btn info" onclick="openSaleInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button></td>
+            </tr>`;
+          })
+          .join("");
+        body.innerHTML = rows || `<tr><td colspan="7">Məlumat yoxdur</td></tr>`;
+      } else if (repView === "purch") {
+        const purchInRange = db.purch
+          .filter((p) => (useMonth ? inMonth(p.date, repMonth) : inDateRange(p.date, "repFrom", "repTo")))
+          .slice()
+          .sort((a, b) => (a.date > b.date ? -1 : 1));
+        head.innerHTML = `<tr><th>#</th><th>Tarix</th><th>Qaimə</th><th>Təchizatçı</th><th>Məhsul</th><th>Məbləğ</th></tr>`;
+        body.innerHTML =
+          purchInRange
+            .map((p, i) => {
+              const inv = p.invNo || invFallback("purch", p.uid);
+              return `
+              <tr>
+                <td>${i + 1}</td>
+                <td>${fmtDT(p.date)}</td>
+                <td>${escapeHtml(inv)}</td>
+                <td>${escapeHtml(p.supp)}</td>
+                <td>${escapeHtml(p.name)}</td>
+                <td>${money(p.amount)} AZN</td>
+              </tr>`;
+            })
+            .join("") || `<tr><td colspan="6">Məlumat yoxdur</td></tr>`;
+      } else if (repView === "expense") {
+        const expRows = db.cash
+          .filter((c) => c.type === "out")
+          .filter((c) => c.link && c.link.kind === "expense")
+          .filter((c) => (useMonth ? inMonth(c.date, repMonth) : inDateRange(c.date, "repFrom", "repTo")))
+          .slice()
+          .sort((a, b) => (a.date > b.date ? -1 : 1));
+        head.innerHTML = `<tr><th>#</th><th>Tarix</th><th>Mənbə</th><th>Məbləğ</th><th>Qeyd</th></tr>`;
+        body.innerHTML =
+          expRows
+            .map(
+              (c, i) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td>${fmtDT(c.date)}</td>
+              <td>${escapeHtml(c.source)}</td>
+              <td class="amt-out">-${money(c.amount)} AZN</td>
+              <td>${escapeHtml(c.note || "")}</td>
+            </tr>`
+            )
+            .join("") || `<tr><td colspan="5">Məlumat yoxdur</td></tr>`;
+      } else if (repView === "monthly") {
+        const monthsList = [];
+        if (repMonth) {
+          monthsList.push(repMonth);
+        } else {
+          const fromMs = parseDateOnly(byId("repFrom")?.value);
+          const toMs = parseDateOnly(byId("repTo")?.value);
+          if (fromMs && toMs) {
+            const from = new Date(fromMs);
+            const to = new Date(toMs);
+            let y = from.getFullYear();
+            let m = from.getMonth() + 1;
+            const endY = to.getFullYear();
+            const endM = to.getMonth() + 1;
+            while (y < endY || (y === endY && m <= endM)) {
+              monthsList.push(`${y}-${String(m).padStart(2, "0")}`);
+              m++;
+              if (m > 12) {
+                m = 1;
+                y++;
+              }
+            }
+          }
+        }
+        head.innerHTML = `<tr><th>#</th><th>Ay</th><th>Satış</th><th>Alış</th><th>Xərc</th><th>Əməkhaqqı</th><th>Mənfəət/Zərər</th></tr>`;
+        if (monthsList.length === 0) {
+          body.innerHTML = `<tr><td colspan="7">Ay (repMonth) və ya tarix aralığı (repFrom–repTo) seçin</td></tr>`;
+        } else {
+          body.innerHTML = monthsList
+            .map((monthKey, i) => {
+              const salesInMonth = db.sales
+                .filter((s) => !s.returnedAt)
+                .filter((s) => inMonth(s.date, monthKey));
+              const salesSum = salesInMonth.reduce((a, s) => a + n(s.amount), 0);
+              const cogsM = salesInMonth.reduce((a, s) => {
+                if (s.bulkPurchUid) {
+                  const p = db.purch.find((x) => String(x.uid) === String(s.bulkPurchUid));
+                  const unit = p ? n(p.amount) / Math.max(1, Math.floor(n(p.qty || 1))) : 0;
+                  return a + unit * Math.max(1, Math.floor(n(s.qty || 1)));
+                }
+                const p = db.purch.find((x) => itemKeyFromPurch(x) === s.itemKey);
+                return a + (p ? n(p.amount) : 0);
+              }, 0);
+              const expM = db.cash
+                .filter((c) => c.type === "out")
+                .filter((c) => c.link && c.link.kind === "expense")
+                .filter((c) => inMonth(c.date, monthKey))
+                .reduce((a, c) => a + n(c.amount), 0);
+              const byEmpM = new Map();
+              for (const s of salesInMonth) {
+                const empId = String(s.employeeId || "");
+                if (!empId) continue;
+                byEmpM.set(empId, (byEmpM.get(empId) || 0) + n(s.amount));
+              }
+              let payrollM = 0;
+              for (const st of db.staff || []) {
+                const salesEmp = byEmpM.get(String(st.uid)) || 0;
+                const pct = Math.max(0, n(st.commPct || 0));
+                const base = Math.max(0, n(st.baseSalary || 0));
+                payrollM += base + salesEmp * (pct / 100);
+              }
+              const plM = salesSum - cogsM - expM - payrollM;
+              const [y, m] = monthKey.split("-");
+              const ayLabel = `${y}‑${m}`;
+              return `
+              <tr>
+                <td>${i + 1}</td>
+                <td>${escapeHtml(ayLabel)}</td>
+                <td>${money(salesSum)} AZN</td>
+                <td>${money(cogsM)} AZN</td>
+                <td>${money(expM)} AZN</td>
+                <td>${money(payrollM)} AZN</td>
+                <td>${money(plM)} AZN</td>
+              </tr>`;
+            })
+            .join("");
+        }
+      } else if (repView === "staff") {
+        const byEmp = new Map();
+        for (const s of salesInRange) {
+          const empId = String(s.employeeId || "");
+          if (!empId) continue;
+          if (!byEmp.has(empId)) byEmp.set(empId, { count: 0, sum: 0 });
+          const o = byEmp.get(empId);
+          o.count += 1;
+          o.sum += n(s.amount);
+        }
+        const staffSorted = db.staff
+          .slice()
+          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+        head.innerHTML = `<tr><th>#</th><th>Əməkdaş</th><th>Satış sayı</th><th>Satış cəmi</th><th>Faiz</th><th>Komissiya</th><th>Baza maaş</th><th>Yekun</th><th>Əməliyyat</th></tr>`;
+        body.innerHTML =
+          staffSorted
+            .map((st, i) => {
+              const empId = String(st.uid);
+              const o = byEmp.get(empId) || { count: 0, sum: 0 };
+              const pct = Math.max(0, n(st.commPct || 0));
+              const base = Math.max(0, n(st.baseSalary || 0));
+              const comm = o.sum * (pct / 100);
+              const total = base + comm;
+              return `
+              <tr>
+                <td>${i + 1}</td>
+                <td>${escapeHtml(st.name)}</td>
+                <td>${o.count}</td>
+                <td>${money(o.sum)} AZN</td>
+                <td>${money(pct)}%</td>
+                <td>${money(comm)} AZN</td>
+                <td>${money(base)} AZN</td>
+                <td>${money(total)} AZN</td>
+                <td class="tbl-actions"><button class="btn-mini" type="button" onclick="openStaffReportSales('${escapeAttr(empId)}')" title="Satış siyahısı"><i class="fas fa-list"></i> Bax</button></td>
+              </tr>`;
+            })
+            .join("") || `<tr><td colspan="9">Məlumat yoxdur</td></tr>`;
+      } else {
+        head.innerHTML = `<tr><th>Göstəriş</th><th>Dəyər</th></tr>`;
+        body.innerHTML = `
+          <tr><td>Satış</td><td>${money(salesTotal)} AZN</td></tr>
+          <tr><td>Alış</td><td>${money(cogs)} AZN</td></tr>
+          <tr><td>Xərc</td><td>${money(exp)} AZN</td></tr>
+          <tr><td>Əməkhaqqı (bütün əməkdaşlar, ay üzrə)</td><td>${money(payrollTotalPeriod)} AZN</td></tr>
+          <tr><td>Mənfəət/Zərər</td><td>${money(pl)} AZN</td></tr>
+        `;
+      }
+    }
+
+    // payroll (commission from employee's own sales total) + sale count + Bax
+    const payBody = byId("tblPayroll");
+    if (payBody) {
+      const byEmpPay = new Map();
+      for (const s of salesInRange) {
+        const empId = String(s.employeeId || "");
+        if (!empId) continue;
+        if (!byEmpPay.has(empId)) byEmpPay.set(empId, { count: 0, sum: 0 });
+        const o = byEmpPay.get(empId);
+        o.count += 1;
+        o.sum += n(s.amount);
+      }
+      const rows = db.staff
+        .slice()
+        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+        .map((st, i) => {
+          const o = byEmpPay.get(String(st.uid)) || { count: 0, sum: 0 };
+          const salesSum = o.sum;
+          const pct = Math.max(0, n(st.commPct || 0));
+          const base = Math.max(0, n(st.baseSalary || 0));
+          const comm = salesSum * (pct / 100);
+          const total = base + comm;
+          return `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(st.name)}</td>
+            <td>${o.count}</td>
+            <td>${money(salesSum)} AZN</td>
+            <td>${money(pct)}%</td>
+            <td>${money(comm)} AZN</td>
+            <td>${money(base)} AZN</td>
+            <td>${money(total)} AZN</td>
+            <td class="tbl-actions"><button class="btn-mini" type="button" onclick="openStaffReportSales('${escapeAttr(String(st.uid))}')" title="Satış siyahısı"><i class="fas fa-list"></i> Bax</button></td>
+          </tr>`;
+        })
+        .join("");
+      payBody.innerHTML = rows || `<tr><td colspan="9">Məlumat yoxdur</td></tr>`;
+    }
+  }
+
+  const totalsAll = cashTotals();
+  // dashboard stats
+  const stockCount = db.purch.reduce((a, p) => a + purchRemainingQty(p), 0);
+  const debtorSum = db.sales.reduce((a, s) => a + saleRemaining(s), 0);
+  const creditorSum = db.purch.reduce((a, p) => a + purchRemaining(p), 0);
+
+  byId("st-cust").innerText = String(db.cust.length);
+  byId("st-stock").innerText = String(stockCount);
+  byId("st-debts").innerText = money(debtorSum);
+  byId("st-creditor").innerText = money(creditorSum);
+  byId("st-cash").innerText = money(totalsAll.balance);
+}
+
+function delItem(type, i) {
+  if (!confirm("Silinsin?")) return;
+  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  ensureAuditTrash();
+  const u = currentUser();
+  const deletedBy = u ? u.username : "-";
+  const deletedAt = nowISODateTimeLocal();
+
+  if (type === "purch") {
+    const p = db.purch[i];
+    if (!p) return;
+    if (!canDeletePurchase(p)) return alert("Bu alış satılıb (və ya say ilə satış edilib). Əvvəl satışı silin.");
+    db.trash.push({ uid: genId(db.trash, 1), type: "purch", item: p, deletedAt, deletedBy });
+    logEvent("delete", "purch", { uid: p.uid });
+    db.purch.splice(i, 1);
+    saveDB();
+    return;
+  }
+
+  if (type === "sales") {
+    const s = db.sales[i];
+    if (!s) return;
+    db.trash.push({ uid: genId(db.trash, 1), type: "sales", item: s, deletedAt, deletedBy });
+    logEvent("delete", "sales", { uid: s.uid });
+    db.sales.splice(i, 1);
+    saveDB();
+    return;
+  }
+
+  if (type === "cust") {
+    const c = db.cust[i];
+    if (!c) return;
+    db.trash.push({ uid: genId(db.trash, 1), type: "cust", item: c, deletedAt, deletedBy });
+    logEvent("delete", "cust", { uid: c.uid });
+    db.cust.splice(i, 1);
+    saveDB();
+    return;
+  }
+  if (type === "supp") {
+    const s = db.supp[i];
+    if (!s) return;
+    db.trash.push({ uid: genId(db.trash, 1), type: "supp", item: s, deletedAt, deletedBy });
+    logEvent("delete", "supp", { uid: s.uid });
+    db.supp.splice(i, 1);
+    saveDB();
+    return;
+  }
+  if (type === "prod") {
+    const p = db.prod[i];
+    if (!p) return;
+    db.trash.push({ uid: genId(db.trash, 1), type: "prod", item: p, deletedAt, deletedBy });
+    logEvent("delete", "prod", { uid: p.uid });
+    db.prod.splice(i, 1);
+    saveDB();
+    return;
+  }
+  if (type === "staff") {
+    const s = db.staff[i];
+    if (!s) return;
+    db.trash.push({ uid: genId(db.trash, 1), type: "staff", item: s, deletedAt, deletedBy });
+    logEvent("delete", "staff", { uid: s.uid });
+    db.staff.splice(i, 1);
+    saveDB();
+    return;
+  }
+}
+
+// Utilities
+function byId(id) {
+  return document.getElementById(id);
+}
+function val(id) {
+  return (byId(id)?.value ?? "").toString();
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+function escapeAttr(s) {
+  return escapeHtml(s).replaceAll("\n", " ");
+}
+
+// expose functions globally for onclick handlers
+Object.assign(window, {
+  showSec,
+  pagePrev,
+  pageNext,
+  filterTable,
+  closeMdl,
+  login,
+  logout,
+  openCust,
+  saveCust,
+  openCustInfo,
+  openSupp,
+  saveSupp,
+  openSuppInfo,
+  openProd,
+  saveProd,
+  openPurch,
+  savePurch,
+  openSale,
+  saveSale,
+  openSaleInfo,
+  openSalePayment,
+  saveSalePayment,
+  openPaymentHistory,
+  openStaff,
+  saveStaff,
+  openCashOp,
+  saveCashOp,
+  delCashOp,
+  toggleCashKind,
+  refreshSubcats,
+  refreshSupplierInvoices,
+  addExpenseCategory,
+  addExpenseSubcategory,
+  filterDebts,
+  filterCreditOnly,
+  filterCreditor,
+  openCreditorInfo,
+  openCreditorPayment,
+  saveCreditorPayment,
+  openCreditorInvoicePayment,
+  saveCreditorInvoicePayment,
+  openSupplierPaymentHistory,
+  openDebtorInfo,
+  openDebtorPayment,
+  saveDebtorPayment,
+  delItem,
+  toggleCreditBox,
+  recalcCredit,
+  togglePurchBulk,
+  toggleSaleQty,
+  openAccount,
+  saveAccount,
+  delAccount,
+  openCompany,
+  saveCompany,
+  delCompany,
+  useCompany,
+  resetCompanyData,
+  openUser,
+  saveUser,
+  delUser,
+  openChangePassword,
+  changePassword,
+  openProfile,
+  openSettings,
+  saveSettings,
+  openAuditDetails,
+  openGlobalSearch,
+  runGlobalSearch,
+  exportCompany,
+  importCompany,
+  exportCsvCurrent,
+  recalcAll,
+  openQrTool,
+  genQr,
+  clearAudit,
+  emptyTrash,
+  restoreTrash,
+  deleteTrash,
+  openReturnSale,
+  saveReturnSale,
+  printSale,
+  toggleDevMenu,
+});
+
+function initApp() {
+  applyAccessUI();
+  if (!meta.session) {
+    showLoginOverlay(true);
+    return;
+  }
+  showLoginOverlay(false);
+  renderAll();
+  const first = document.querySelector(".nav-link.active") || document.querySelector(".nav-link");
+  if (first) first.click();
+}
+
+async function init() {
+  const loadingEl = byId("loadingOverlay");
+  if (loadingEl) loadingEl.classList.remove("hidden");
+  byId("loadingText").textContent = useFirestore() ? "Firestore bağlanır..." : "Yüklənir...";
+
+  initFirestore();
+  meta = await loadMetaAsync();
+  ensureMetaDefaults();
+  if (useFirestore()) saveMeta();
+
+  if (meta.session) {
+    if (byId("loadingText")) byId("loadingText").textContent = "Məlumat yüklənir...";
+    db = await loadCompanyDBAsync();
+  } else {
+    db = defaultDB();
+  }
+  subscribeRealtime();
+  if (loadingEl) loadingEl.classList.add("hidden");
+  initApp();
+}
+
+window.addEventListener("load", () => {
+  if (typeof FIREBASE_CONFIG === "undefined") window.FIREBASE_CONFIG = null;
+  init();
+});
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openGlobalSearch();
+  }
+});
+
