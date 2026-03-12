@@ -29,8 +29,8 @@ aside{
   width:260px;background:var(--sidebar-bg);border-right:1px solid var(--border-color);
   height:100vh;position:fixed;padding:30px 15px;
 }
-.logo{margin-bottom:18px;padding:8px 12px;display:flex;align-items:center;justify-content:center;background:transparent;}
-.logo-img{height:52px;width:auto;max-width:100%;object-fit:contain;display:block;background:transparent;}
+.logo{margin-bottom:18px;padding:0 0 12px;display:block;background:transparent;}
+.logo-img{width:100%;height:auto;max-height:80px;object-fit:contain;display:block;background:transparent;}
 
 /* Top header bar (same style as sidebar) */
 .main-area{
