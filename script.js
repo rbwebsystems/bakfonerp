@@ -564,6 +564,7 @@ function sectionLabelAz(id) {
     trash: "Səbət",
     tools: "Alətlər",
     reports: "Hesabatlar",
+    test: "Test",
     profile: "Profil",
   };
   return map[id] || id;

@@ -34,6 +34,7 @@
         <div class="nav-link dev-sub" onclick="showSec('tools', this)"><i class="fas fa-screwdriver-wrench"></i> Alətlər</div>
       </div>
       <div class="nav-link" onclick="showSec('reports', this)"><i class="fas fa-chart-line"></i> Hesabatlar</div>
+      <div class="nav-link dev-only" onclick="showSec('test', this)"><i class="fas fa-flask"></i> Test</div>
     </nav>
   </aside>
 
@@ -556,6 +557,23 @@
           <thead><tr><th>#</th><th>Əməkdaş</th><th>Satış sayı</th><th>Satış cəmi</th><th>Faiz</th><th>Komissiya</th><th>Baza maaş</th><th>Yekun</th><th>Əməliyyat</th></tr></thead>
           <tbody id="tblPayroll"></tbody>
         </table>
+      </div>
+    </div>
+
+    <div id="test" class="section">
+      <div class="content-header">
+        <h1>Test</h1>
+        <div class="header-actions">
+          <button class="btn-cancel" type="button" onclick="toast('Test OK', 'ok')">Toast test</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="info-block">
+          <div class="info-row">
+            <div class="info-label">Qeyd</div>
+            <div class="info-value">Bu bölmə test üçün yaradılıb.</div>
+          </div>
+        </div>
       </div>
     </div>
 
