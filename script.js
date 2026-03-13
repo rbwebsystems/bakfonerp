@@ -2705,7 +2705,7 @@ function openEditCashOp(uid) {
   if (i < 0) return;
   const c = db.cash[i];
   const kind = c.link?.kind || "";
-  const canEditAmount = kind === "expense" || kind === "income" || kind === "";
+  const canEditAmount = isDeveloper() || kind === "expense" || kind === "income" || kind === "";
   const accOptions = accountOptionsHtml(c.accountId || 1);
   openModal(`
     <h2>Əməliyyatı redaktə et</h2>
@@ -2738,7 +2738,7 @@ function saveEditCashOp(e, uid) {
   if (i < 0) return;
   const c = db.cash[i];
   const kind = c.link?.kind || "";
-  const canEditAmount = kind === "expense" || kind === "income" || kind === "";
+  const canEditAmount = isDeveloper() || kind === "expense" || kind === "income" || kind === "";
   const date = byId("edit_cash_date")?.value || c.date;
   const amount = canEditAmount ? Math.max(0, n(byId("edit_cash_amount")?.value)) : n(c.amount);
   const source = (byId("edit_cash_source")?.value || "").trim() || c.source;
