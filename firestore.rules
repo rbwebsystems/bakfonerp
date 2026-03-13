@@ -1,0 +1,13 @@
+rules_version = '2';
+// Bakfon ERP – development üçün açıq oxuma/yazma (test rejimi)
+// Production-da request.auth və ya öz şərtlərinizi əlavə edin
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /config/{doc} {
+      allow read, write: if true;
+    }
+    match /companies/{companyId} {
+      allow read, write: if true;
+    }
+  }
+}
