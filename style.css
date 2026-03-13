@@ -251,6 +251,7 @@ select{
   .search-container{width:100%;}
 }
 .dev-only{display:none;}
+.admin-only{display:none;}
 .muted{color:var(--text-muted);}
 
 .grid-4{

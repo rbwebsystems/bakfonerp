@@ -626,10 +626,12 @@ function openAuditDetails(uid) {
 function applyAccessUI() {
   const dev = isDeveloper();
   const admin = isAdmin();
-  const devOrAdmin = dev || admin;
   document.querySelectorAll(".dev-only").forEach((el) => {
-    if (el.id === "devMenu") el.style.display = devOrAdmin ? (el.style.display || "none") : "none";
-    else el.style.display = devOrAdmin ? "flex" : "none";
+    if (el.id === "devMenu") el.style.display = dev ? (el.style.display || "none") : "none";
+    else el.style.display = dev ? "flex" : "none";
+  });
+  document.querySelectorAll(".admin-only").forEach((el) => {
+    el.style.display = admin && !dev ? "flex" : "none";
   });
 
   // Hide sections the user can't access (nav links)
@@ -638,7 +640,7 @@ function applyAccessUI() {
     const m = on.match(/showSec\('([^']+)'/);
     if (!m) return;
     const secId = m[1];
-    if (el.classList.contains("dev-only")) return; // handled above
+    if (el.classList.contains("dev-only") || el.classList.contains("admin-only")) return;
     el.style.display = userCanSection(secId) ? "flex" : "none";
   });
 
