@@ -532,6 +532,17 @@ function isAdmin() {
   return !!u && u.role === "admin";
 }
 
+/**
+ * Test şirkətinə aid olan hər şeyi yalnız orada göstərmək üçün.
+ * Yeni düymə/funksiya əlavə edəndə bu yoxlamadan istifadə edin – digər şirkətlər görməz və təsirlənməz.
+ * Nümunə: if (isTestCompany()) { ... düymə və ya HTML ... }
+ * Test şirkətin ID-si "test" olmalıdır (Şirkətlər bölməsində).
+ */
+function isTestCompany() {
+  const cid = (meta?.session?.companyId || "").toLowerCase();
+  return cid === "test";
+}
+
 /** Yalnız admin və developer təsisçi/sahibkar mədaxili edə bilər; adi userlər bu seçimi görməz. */
 function userCanOwnerIncome() {
   return isDeveloper() || isAdmin();
