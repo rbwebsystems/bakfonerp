@@ -3519,7 +3519,6 @@ function userBelongsToCompany(u, cid) {
 }
 
 function usersForCurrentCompany() {
-  if (isDeveloper()) return (meta.users || []).slice();
   const cid = meta?.session?.companyId;
   if (!cid) return [];
   return meta.users.filter((u) => userBelongsToCompany(u, cid));
