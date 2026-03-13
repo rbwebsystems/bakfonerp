@@ -43,7 +43,8 @@ function initFirestore() {
   if (!useFirestore() || firestoreInitialized) return;
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
-    firebase.firestore().settings({ experimentalForceLongPolling: false });
+    // Long polling bəzən WebSocket-dən daha etibarlı sinxron verir (şəbəkə/brauzerə görə)
+    firebase.firestore().settings({ experimentalForceLongPolling: true });
     firestoreInitialized = true;
   } catch (e) {
     console.warn("Firebase init xətası:", e);
@@ -147,6 +148,7 @@ function subscribeRealtime() {
           if (snap.exists()) {
             db = { ...defaultDB(), ...snap.data() };
             renderAll();
+            if (Date.now() - lastFirestoreWriteAt > 2000) toast("Məlumat yeniləndi", "ok", 1500);
           }
         },
         (err) => console.warn("Firestore company listener:", err)
@@ -163,6 +165,25 @@ function unsubscribeRealtime() {
   if (firestoreUnsubCompany) {
     firestoreUnsubCompany();
     firestoreUnsubCompany = null;
+  }
+}
+
+/** Buluddan (Firestore) cari şirkət məlumatını oxuyub ekranı yenilə. Digər cihazda edilən dəyişiklikləri gətirir. */
+async function refreshFromCloud() {
+  if (!useFirestore() || !meta?.session?.companyId) return;
+  const cid = meta.session.companyId;
+  const ref = getCompanyRef(cid);
+  if (!ref) return;
+  try {
+    const snap = await ref.get();
+    if (snap.exists()) {
+      db = { ...defaultDB(), ...snap.data() };
+      renderAll();
+      toast("Məlumat buluddan yeniləndi", "ok", 2000);
+    }
+  } catch (e) {
+    console.warn("Buluddan yeniləmə xətası:", e);
+    toast("Yeniləmə xətası", "err", 2000);
   }
 }
 
@@ -294,6 +315,7 @@ function loadCompanyDB() {
 function saveCompanyDB() {
   const cid = meta?.session?.companyId || meta?.companies?.[0]?.id || "default";
   if (useFirestore()) {
+    lastFirestoreWriteAt = Date.now();
     const ref = getCompanyRef(cid);
     if (ref) {
       const data = JSON.parse(JSON.stringify(db));
@@ -306,6 +328,7 @@ function saveCompanyDB() {
 
 let lastSavedAt = 0;
 let lastSavedToastAt = 0;
+let lastFirestoreWriteAt = 0;
 function updateLastSavedEl() {
   const el = byId("lastSavedEl");
   if (!el) return;
@@ -538,14 +561,18 @@ function applyAccessUI() {
     el.style.display = userCanSection(secId) ? "flex" : "none";
   });
 
-  // Realtime / Cloud sync indicator
+  // Realtime / Cloud sync indicator (kliklə buluddan yenilə)
   const realtimeEl = byId("realtimeIndicator");
   if (realtimeEl) {
     if (useFirestore() && meta?.session?.companyId) {
       realtimeEl.textContent = "Realtime";
       realtimeEl.classList.remove("hidden");
+      realtimeEl.title = "Realtime sinxron. Kliklə buluddan yenilə.";
+      realtimeEl.style.cursor = "pointer";
+      realtimeEl.onclick = () => refreshFromCloud();
     } else {
       realtimeEl.classList.add("hidden");
+      realtimeEl.onclick = null;
     }
   }
 }
@@ -4522,6 +4549,7 @@ Object.assign(window, {
   openDebtorInfo,
   openDebtorPayment,
   saveDebtorPayment,
+  refreshFromCloud,
   delItem,
   toggleCreditBox,
   recalcCredit,
@@ -4627,6 +4655,12 @@ async function init() {
 window.addEventListener("load", () => {
   if (typeof FIREBASE_CONFIG === "undefined") window.FIREBASE_CONFIG = null;
   init();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (!useFirestore() || !meta?.session?.companyId) return;
+  setTimeout(refreshFromCloud, 300);
 });
 
 document.addEventListener("keydown", (e) => {
