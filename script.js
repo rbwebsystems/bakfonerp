@@ -4005,7 +4005,6 @@ function renderAll() {
   byId("tblDebts").innerHTML = groupsPage
     .map((g, i) => {
       const payDisabled = g.rem <= 0.000001 ? "disabled" : "";
-      const firstSaleIdx = g.items && g.items[0] != null ? g.items[0].saleIdx : -1;
       return `
       <tr>
         <td>${i + 1}</td>
@@ -4016,7 +4015,6 @@ function renderAll() {
         <td><span class="pill ${g.st}">${debtLabel(g.st)}</span></td>
         <td class="tbl-actions">
           <button class="icon-btn info" onclick="openDebtorInfo('${escapeAttr(g.customerId)}')" title="Info"><i class="fas fa-circle-info"></i></button>
-          ${userCanEdit() && firstSaleIdx >= 0 ? `<button class="icon-btn edit" onclick="openSale(${firstSaleIdx})" title="Redaktə"><i class="fas fa-pen"></i></button>` : ""}
           <button class="btn-mini-pay" type="button" onclick="openDebtorPayment('${escapeAttr(g.customerId)}')" ${payDisabled}>Ödəniş et</button>
         </td>
       </tr>`;
@@ -4056,9 +4054,8 @@ function renderAll() {
   const filteredGroups = paginate(filteredGroupsAll, "cred", credPageSize, "credPageInfo");
 
   byId("tblCreditor").innerHTML = filteredGroups
-    .map((g, i) => {
-      const firstPurchIdx = g.purchases && g.purchases[0] ? db.purch.findIndex((p) => Number(p.uid) === Number(g.purchases[0].uid)) : -1;
-      return `
+    .map(
+      (g, i) => `
     <tr>
       <td>${i + 1}</td>
       <td>${escapeHtml(g.supp)}</td>
@@ -4068,10 +4065,9 @@ function renderAll() {
       <td><span class="pill ${g.st}">${debtLabel(g.st)}</span></td>
       <td class="tbl-actions">
         <button class="icon-btn info" onclick="openCreditorInfo(${credGroups.indexOf(g)})" title="Info"><i class="fas fa-circle-info"></i></button>
-        ${userCanEdit() && firstPurchIdx >= 0 ? `<button class="icon-btn edit" onclick="openPurch(${firstPurchIdx})" title="Redaktə"><i class="fas fa-pen"></i></button>` : ""}
       </td>
-    </tr>`;
-    })
+    </tr>`
+    )
     .join("");
   filterCreditor();
 
