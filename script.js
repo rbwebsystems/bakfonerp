@@ -4801,22 +4801,30 @@ function initApp() {
     return;
   }
   showLoginOverlay(false);
-  renderAll();
+  var secToShow = null;
+  var navToUse = null;
   const lastSection = (typeof sessionStorage !== "undefined" && sessionStorage.getItem("bakfon_lastSection")) || null;
   if (lastSection && userCanSection(lastSection)) {
     const navLink = Array.from(document.querySelectorAll(".nav-link")).find(
       (el) => el.getAttribute("onclick")?.includes("showSec('" + lastSection + "'") && el.style.display !== "none"
     );
     if (navLink) {
-      navLink.click();
-      return;
+      secToShow = lastSection;
+      navToUse = navLink;
     }
   }
-  const firstVisible = Array.from(document.querySelectorAll(".nav-link")).find(
-    (el) => el.style.display !== "none" && !el.classList.contains("dev-toggle")
-  );
-  const firstSecId = firstVisible?.getAttribute("onclick")?.match(/showSec\('([^']+)'/)?.[1];
-  if (firstVisible && firstSecId && userCanSection(firstSecId)) firstVisible.click();
+  if (!secToShow) {
+    const firstVisible = Array.from(document.querySelectorAll(".nav-link")).find(
+      (el) => el.style.display !== "none" && !el.classList.contains("dev-toggle")
+    );
+    const firstSecId = firstVisible?.getAttribute("onclick")?.match(/showSec\('([^']+)'/)?.[1];
+    if (firstVisible && firstSecId && userCanSection(firstSecId)) {
+      secToShow = firstSecId;
+      navToUse = firstVisible;
+    }
+  }
+  if (secToShow && navToUse) showSec(secToShow, navToUse);
+  renderAll();
 }
 
 function hideLoading() {
