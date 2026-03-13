@@ -894,15 +894,47 @@ function nextInvNo(kind) {
   ensureCounters();
   if (kind === "purch") {
     const n0 = db.counters.purchInv++;
-    return `A-${pad6(n0)}`;
+    return "AL-" + String(n0).padStart(3, "0");
   }
   const n0 = db.counters.salesInv++;
-  return `S-${pad6(n0)}`;
+  return "ST-" + String(n0).padStart(3, "0");
 }
 
 function invFallback(kind, uid) {
-  const prefix = kind === "purch" ? "A" : "S";
-  return `${prefix}-${pad6(uid)}`;
+  return kind === "purch" ? "AL-000" : "ST-000";
+}
+
+function ensureInvNoFormat() {
+  const pad3 = (n) => String(n).padStart(3, "0");
+  let purchNum = 0;
+  let salesNum = 0;
+  (db.purch || [])
+    .slice()
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || Number(a.uid) - Number(b.uid))
+    .forEach((p) => {
+      purchNum++;
+      p.invNo = "AL-" + pad3(purchNum);
+    });
+  (db.sales || [])
+    .slice()
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || Number(a.uid) - Number(b.uid))
+    .forEach((s) => {
+      salesNum++;
+      s.invNo = "ST-" + pad3(salesNum);
+    });
+  if (!db.counters) db.counters = { purchInv: 1, salesInv: 1 };
+  db.counters.purchInv = Math.max(db.counters.purchInv || 1, purchNum + 1);
+  db.counters.salesInv = Math.max(db.counters.salesInv || 1, salesNum + 1);
+}
+
+function runInvNoMigrationIfNeeded() {
+  if (!db) return;
+  const needsPurch = (db.purch || []).some((p) => !/^AL-\d+$/.test(String(p.invNo || "").trim()));
+  const needsSales = (db.sales || []).some((s) => !/^ST-\d+$/.test(String(s.invNo || "").trim()));
+  if (needsPurch || needsSales) {
+    ensureInvNoFormat();
+    saveDB();
+  }
 }
 
 function genId(list, minStart = 1) {
@@ -4035,6 +4067,7 @@ function renderAll() {
     return;
   }
   showLoginOverlay(false);
+  runInvNoMigrationIfNeeded();
   applyAccessUI();
   refreshHeaderBar();
   startHeaderClock();
@@ -4141,11 +4174,7 @@ function renderAll() {
         <td>${fmtDT(p.date)}</td>
         <td>${escapeHtml(p.supp)}</td>
         <td>${escapeHtml(p.name)}</td>
-        <td>${escapeHtml(p.code || "")}</td>
         <td>${purchIsBulk(p) ? String(Math.max(1, Math.floor(n(p.qty || 1)))) : ""}</td>
-        <td>${escapeHtml(p.imei1 || "")}</td>
-        <td>${escapeHtml(p.imei2 || "")}</td>
-        <td>${escapeHtml(p.seria || "")}</td>
         <td>${money(p.amount)} AZN</td>
         <td>${money(p.paidTotal)} AZN</td>
         <td>${money(rem)} AZN</td>
@@ -4201,11 +4230,7 @@ function renderAll() {
         <td>${fmtDT(s.date)}</td>
         <td>${escapeHtml(s.customerName)}</td>
         <td>${escapeHtml(s.productName)}</td>
-        <td>${escapeHtml(s.code || "")}</td>
         <td>${String(Math.max(1, Math.floor(n(s.qty || 1))))}</td>
-        <td>${escapeHtml(s.imei1 || "")}</td>
-        <td>${escapeHtml(s.imei2 || "")}</td>
-        <td>${escapeHtml(s.seria || "")}</td>
         <td>${escapeHtml(String(s.saleType).toUpperCase())}</td>
         <td>${escapeHtml(s.employeeName || "")}</td>
         <td>${money(s.amount)} AZN</td>
