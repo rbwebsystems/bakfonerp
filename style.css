@@ -473,7 +473,7 @@ tr.total-row td{padding:10px 12px;}
   display:none;
   justify-content:center;
   align-items:flex-start;
-  z-index:1000;
+  z-index:10000;
   padding:24px 12px;
   overflow:auto;
 }

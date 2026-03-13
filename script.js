@@ -699,23 +699,21 @@ function showLoginOverlay(show) {
     const sel = byId("loginCompany");
     if (sel) {
       sel.innerHTML = meta.companies.map((c) => `<option value="${escapeAttr(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.id)})</option>`).join("");
+      const fromUrl = window.__loginCompanyFromUrl;
+      if (fromUrl && meta.companies.some((c) => c.id === fromUrl)) sel.value = fromUrl;
     }
-    byId("loginHint").innerText = "Default: developer / developer";
+    byId("loginHint").innerText = window.__loginCompanyFromUrl ? "Link ünvanı ilə giriş." : "Keçid ünvanında ?company=ŞİRKƏT_ID olmalıdır.";
     setTimeout(() => byId("loginUser")?.focus(), 0);
   }
 }
 
-function login(e) {
-  e.preventDefault();
-  const companyId = val("loginCompany");
-  const username = val("loginUser").trim();
-  const pass = val("loginPass");
-  const u = meta.users.find((x) => x.username === username);
-  if (!u || !u.active) return alert("İstifadəçi tapılmadı (və ya deaktivdir).");
-  if (u.pass !== pass) return alert("Şifrə yanlışdır.");
+function doLoginWithCompany(companyId) {
+  const pending = window.__pendingLogin;
+  if (!pending) return;
+  const { u, pass } = pending;
+  window.__pendingLogin = null;
   const c = meta.companies.find((x) => x.id === companyId);
   if (!c) return alert("Şirkət tapılmadı.");
-
   meta.session = { companyId: c.id, userUid: u.uid };
   saveMeta();
   if (useFirestore()) {
@@ -736,6 +734,30 @@ function login(e) {
     logEvent("login", "auth", { companyId: c.id });
     renderAll();
   }
+}
+
+function login(e) {
+  e.preventDefault();
+  const username = val("loginUser").trim();
+  const pass = val("loginPass");
+  const u = meta.users.find((x) => x.username === username);
+  if (!u || !u.active) return alert("İstifadəçi tapılmadı (və ya deaktivdir).");
+  if (u.pass !== pass) return alert("Şifrə yanlışdır.");
+  window.__pendingLogin = { u, pass };
+  if (u.role === "developer") {
+    const list = (meta.companies || [])
+      .map((c) => `<button type="button" class="btn-main" style="width:100%;margin-bottom:8px;text-align:left;padding:12px 16px;" onclick="closeMdl();window.__developerCompanyCallback('${escapeAttr(c.id)}');">${escapeHtml(c.name)} <small class="muted">(${escapeHtml(c.id)})</small></button>`)
+      .join("");
+    const html = `<div class="modal-body"><h3 style="margin-bottom:16px;">Şirkət seçin</h3><div style="display:flex;flex-direction:column;max-height:60vh;overflow-y:auto;">${list || "<p class=\"muted\">Şirkət yoxdur.</p>"}</div></div>`;
+    window.__developerCompanyCallback = (companyId) => {
+      doLoginWithCompany(companyId);
+    };
+    openModal(html);
+    return;
+  }
+  const companyId = window.__loginCompanyFromUrl || val("loginCompany");
+  if (!companyId) return alert("Şirkət linki tapılmadı. Keçid ünvanını yoxlayın (məs: ?company=ŞİRKƏT_ID).");
+  doLoginWithCompany(companyId);
 }
 
 function logout() {
@@ -4832,7 +4854,20 @@ function hideLoading() {
   if (loadingEl) loadingEl.classList.add("hidden");
 }
 
+function getLoginCompanyFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("company");
+    if (fromQuery) return String(fromQuery).trim();
+    const hash = (window.location.hash || "").replace(/^#/, "");
+    const fromHash = new URLSearchParams(hash).get("company");
+    if (fromHash) return String(fromHash).trim();
+  } catch (e) {}
+  return null;
+}
+
 async function init() {
+  window.__loginCompanyFromUrl = getLoginCompanyFromUrl();
   const loadingEl = byId("loadingOverlay");
   if (loadingEl) loadingEl.classList.remove("hidden");
   byId("loadingText").textContent = useFirestore() ? "Firestore bağlanır..." : "Yüklənir...";
