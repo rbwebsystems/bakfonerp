@@ -3648,6 +3648,12 @@ function saleTypeLabel(t) {
   return map[String(t || "").toLowerCase()] || String(t || "-");
 }
 
+function getStaffName(uid) {
+  if (!uid) return "-";
+  const s = (db.staff || []).find((x) => String(x.uid) === String(uid));
+  return s ? (s.name || "-") : "-";
+}
+
 function buildMelumatHtml(q) {
   if (!q) return "<p class=\"muted\">Axtarış sözü daxil edin.</p>";
   const qq = q.trim().toLowerCase();
@@ -3662,16 +3668,22 @@ function buildMelumatHtml(q) {
     if (shownKeys.has(key)) return;
     shownKeys.add(key);
 
+    const purchStaffName = getStaffName(p.employeeId);
+
     let saleHtml = "";
     if (purchIsBulk(p)) {
       const sales = (db.sales || []).filter((s) => !s.returnedAt && String(s.bulkPurchUid || "") === String(p.uid));
       saleHtml = sales.length
-        ? sales.map((s) => `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)}</div></div>`).join("")
+        ? sales.map((s) => {
+            const saleStaffName = s.employeeName || getStaffName(s.employeeId);
+            return `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • Satış edən: ${escapeHtml(saleStaffName)}</div></div>`;
+          }).join("")
         : "<div class=\"info-row\"><div class=\"info-label\">Satış</div><div class=\"info-value\">Satılmayıb</div></div>";
     } else {
       const s = (db.sales || []).find((s) => !s.returnedAt && s.itemKey === key);
+      const saleStaffName = s ? (s.employeeName || getStaffName(s.employeeId)) : "-";
       saleHtml = s
-        ? `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)}</div></div>`
+        ? `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • Satış edən: ${escapeHtml(saleStaffName)}</div></div>`
         : "<div class=\"info-row\"><div class=\"info-label\">Satış</div><div class=\"info-value\">Satılmayıb</div></div>";
     }
 
@@ -3683,6 +3695,7 @@ function buildMelumatHtml(q) {
         <div class="info-row"><div class="info-label">IMEI 2</div><div class="info-value">${escapeHtml(p.imei2 || "-")}</div></div>
         <div class="info-row"><div class="info-label">Seriya №</div><div class="info-value">${escapeHtml(p.seria || "-")}</div></div>
         <div class="info-row"><div class="info-label">Alış</div><div class="info-value">${escapeHtml(inv)} • ${escapeHtml(p.supp || "-")} • ${fmtDT(p.date)}</div></div>
+        <div class="info-row"><div class="info-label">Alış edən əməkdaş</div><div class="info-value">${escapeHtml(purchStaffName)}</div></div>
         ${saleHtml}
       </div>
     `);
@@ -3704,6 +3717,8 @@ function buildMelumatHtml(q) {
     const purchInv = p ? (p.invNo || invFallback("purch", p.uid)) : "-";
     const supp = p ? (p.supp || "-") : "-";
     const purchDate = p ? fmtDT(p.date) : "-";
+    const purchStaffName = p ? getStaffName(p.employeeId) : "-";
+    const saleStaffName = s.employeeName || getStaffName(s.employeeId);
 
     blocks.push(`
       <div class="info-block melumat-block" style="margin-bottom:16px;">
@@ -3713,7 +3728,9 @@ function buildMelumatHtml(q) {
         <div class="info-row"><div class="info-label">IMEI 2</div><div class="info-value">${escapeHtml(imei2)}</div></div>
         <div class="info-row"><div class="info-label">Seriya №</div><div class="info-value">${escapeHtml(seria)}</div></div>
         <div class="info-row"><div class="info-label">Alış</div><div class="info-value">${escapeHtml(purchInv)} • ${escapeHtml(supp)} • ${purchDate}</div></div>
+        <div class="info-row"><div class="info-label">Alış edən əməkdaş</div><div class="info-value">${escapeHtml(purchStaffName)}</div></div>
         <div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(inv)} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)}</div></div>
+        <div class="info-row"><div class="info-label">Satış edən əməkdaş</div><div class="info-value">${escapeHtml(saleStaffName)}</div></div>
       </div>
     `);
     if (key) shownKeys.add(key);
