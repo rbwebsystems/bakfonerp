@@ -910,6 +910,27 @@ function genId(list, minStart = 1) {
   return Math.max(minStart, max + 1);
 }
 
+const THEME_KEY = "bakfon_theme";
+function getTheme() {
+  try {
+    const t = (localStorage.getItem(THEME_KEY) || "light").toLowerCase();
+    return t === "dark" ? "dark" : "light";
+  } catch (e) {
+    return "light";
+  }
+}
+function setTheme(mode) {
+  const m = mode === "dark" ? "dark" : "light";
+  try {
+    localStorage.setItem(THEME_KEY, m);
+  } catch (e) {}
+  applyTheme();
+}
+function applyTheme() {
+  const isDark = getTheme() === "dark";
+  document.body.classList.toggle("theme-dark", isDark);
+}
+
 function getCurrentCompanyName() {
   const cid = meta?.session?.companyId;
   if (!cid) return "";
@@ -3463,12 +3484,20 @@ function openProfile() {
   const u = currentUser();
   const c = meta.companies.find((x) => x.id === meta?.session?.companyId);
   if (!u) return;
+  const theme = getTheme();
   openModal(`
     <h2>Profil</h2>
     <div class="info-block">
       <div class="info-row"><div class="info-label">Şirkət</div><div class="info-value">${escapeHtml(c?.name || "-")} (${escapeHtml(c?.id || "")})</div></div>
       <div class="info-row"><div class="info-label">İstifadəçi</div><div class="info-value">${escapeHtml(u.username)}</div></div>
       <div class="info-row"><div class="info-label">Rol</div><div class="info-value">${escapeHtml(u.role)}</div></div>
+      <div class="info-row">
+        <div class="info-label">Tema</div>
+        <div class="info-value" style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="btn-main ${theme === "light" ? "" : "btn-theme-inactive"}" onclick="setTheme('light');closeMdl();" title="Açıq tema"><i class="fas fa-sun"></i> Açıq</button>
+          <button type="button" class="btn-main ${theme === "dark" ? "" : "btn-theme-inactive"}" onclick="setTheme('dark');closeMdl();" title="Qaranlıq tema"><i class="fas fa-moon"></i> Qaranlıq</button>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn-main" type="button" onclick="openChangePassword()">Şifrəni dəyiş</button>
@@ -4966,6 +4995,7 @@ function getLoginCompanyFromUrl() {
 }
 
 async function init() {
+  applyTheme();
   window.__loginCompanyFromUrl = getLoginCompanyFromUrl();
   const loadingEl = byId("loadingOverlay");
   if (loadingEl) loadingEl.classList.remove("hidden");
