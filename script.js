@@ -449,11 +449,11 @@ function saveMeta() {
   if (useFirestore()) {
     const ref = getMetaRef();
     if (ref) {
-      // session (login) yalnız lokal saxlanılmalıdır; əks halda digər cihazlara yayılır
       const { session, ...rest } = meta || {};
       const data = JSON.parse(JSON.stringify({ ...rest, session: null }));
       ref.set(data).catch((e) => console.warn("Firestore meta yazma xətası:", e));
     }
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
   } else {
     localStorage.setItem(META_KEY, JSON.stringify(meta));
   }
