@@ -521,10 +521,20 @@ function isDeveloper() {
   return !!u && u.role === "developer";
 }
 
+function isAdmin() {
+  const u = currentUser();
+  return !!u && u.role === "admin";
+}
+
+/** Yalnız admin və developer təsisçi/sahibkar mədaxili edə bilər; adi userlər bu seçimi görməz. */
+function userCanOwnerIncome() {
+  return isDeveloper() || isAdmin();
+}
+
 function userCanSection(sectionId) {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   const secs = u.perms?.sections || [];
   return secs.includes("*") || secs.includes(sectionId);
 }
@@ -532,49 +542,49 @@ function userCanSection(sectionId) {
 function userCanEdit() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canEdit;
 }
 
 function userCanDelete() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canDelete;
 }
 
 function userCanPay() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canPay;
 }
 
 function userCanRefund() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canRefund;
 }
 
 function userCanExport() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canExport;
 }
 
 function userCanImport() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canImport;
 }
 
 function userCanReset() {
   const u = currentUser();
   if (!u || !u.active) return false;
-  if (u.role === "developer") return true;
+  if (u.role === "developer" || u.role === "admin") return true;
   return !!u.perms?.canReset;
 }
 
@@ -615,11 +625,11 @@ function openAuditDetails(uid) {
 
 function applyAccessUI() {
   const dev = isDeveloper();
+  const admin = isAdmin();
+  const devOrAdmin = dev || admin;
   document.querySelectorAll(".dev-only").forEach((el) => {
-    // CSS has `.dev-only{display:none}`, so we must explicitly override when dev.
-    // dev menu container uses block
-    if (el.id === "devMenu") el.style.display = dev ? (el.style.display || "none") : "none";
-    else el.style.display = dev ? "flex" : "none";
+    if (el.id === "devMenu") el.style.display = devOrAdmin ? (el.style.display || "none") : "none";
+    else el.style.display = devOrAdmin ? "flex" : "none";
   });
 
   // Hide sections the user can't access (nav links)
@@ -2475,7 +2485,7 @@ function openCashOp() {
           <div class="grid-3">
             <select id="cash_income_from" class="span-3" onchange="toggleIncomeSourceBox()">
               <option value="">Mənbə seç (istəyə bağlı)</option>
-              <option value="owner">Təsisçi / Sahibkar</option>
+              ${userCanOwnerIncome() ? '<option value="owner">Təsisçi / Sahibkar</option>' : ""}
               <option value="supplier">Təchizatçı</option>
               <option value="other">Digər</option>
             </select>
@@ -2632,6 +2642,10 @@ function saveCashOp(e) {
 
   if (kind === "income") {
     const from = val("cash_income_from");
+    if (from === "owner" && !userCanOwnerIncome()) {
+      alert("Təsisçi mədaxili yalnız admin və ya developer edə bilər.");
+      return;
+    }
     const supp = val("cash_income_supplier");
     const src = (val("cash_income_source") || "").trim();
     const label =
@@ -3112,7 +3126,7 @@ function resetCompanyData() {
 }
 
 function openUser(idx = null) {
-  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  if (!isDeveloper() && !isAdmin()) return alert("İcazə yoxdur.");
   const u =
     idx !== null
       ? meta.users[idx]
@@ -3212,7 +3226,7 @@ function openUser(idx = null) {
 
 function saveUser(e, idx) {
   e.preventDefault();
-  if (!isDeveloper()) return;
+  if (!isDeveloper() && !isAdmin()) return;
   const fullName = val("u_full").trim();
   const username = val("u_name").trim();
   const staffUid = (val("u_staff") || "").trim();
@@ -3243,10 +3257,11 @@ function saveUser(e, idx) {
 }
 
 function delUser(idx) {
-  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  if (!isDeveloper() && !isAdmin()) return alert("İcazə yoxdur.");
   const u = meta.users[idx];
   if (!u) return;
   if (u.username === "developer") return alert("Developer silinə bilməz.");
+  if (u.role === "admin" && !isDeveloper()) return alert("Admin istifadəçisini yalnız developer silə bilər.");
   if (!confirm("İstifadəçi silinsin?")) return;
   meta.users.splice(idx, 1);
   saveMeta();
