@@ -864,6 +864,7 @@ function showSec(id, el) {
   if (el) el.classList.add("active");
   const titleEl = byId("appHeaderTitle");
   if (titleEl) titleEl.textContent = sectionLabelAz(id);
+  if (meta?.session) try { sessionStorage.setItem("bakfon_lastSection", id); } catch (e) {}
 }
 
 function pagePrev(key) {
@@ -4801,13 +4802,20 @@ function initApp() {
   }
   showLoginOverlay(false);
   renderAll();
-  const active = document.querySelector(".nav-link.active");
-  const activeSecId = active?.getAttribute("onclick")?.match(/showSec\('([^']+)'/)?.[1];
+  const lastSection = (typeof sessionStorage !== "undefined" && sessionStorage.getItem("bakfon_lastSection")) || null;
+  if (lastSection && userCanSection(lastSection)) {
+    const navLink = Array.from(document.querySelectorAll(".nav-link")).find(
+      (el) => el.getAttribute("onclick")?.includes("showSec('" + lastSection + "'") && el.style.display !== "none"
+    );
+    if (navLink) {
+      navLink.click();
+      return;
+    }
+  }
   const firstVisible = Array.from(document.querySelectorAll(".nav-link")).find(
     (el) => el.style.display !== "none" && !el.classList.contains("dev-toggle")
   );
   const firstSecId = firstVisible?.getAttribute("onclick")?.match(/showSec\('([^']+)'/)?.[1];
-  if (activeSecId && userCanSection(activeSecId)) return;
   if (firstVisible && firstSecId && userCanSection(firstSecId)) firstVisible.click();
 }
 
