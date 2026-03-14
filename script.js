@@ -943,7 +943,6 @@ function genId(list, minStart = 1) {
 }
 
 const THEME_KEY = "bakfon_theme";
-const LOCALE_KEY = "bakfon_locale";
 function getTheme() {
   try {
     const t = (localStorage.getItem(THEME_KEY) || "light").toLowerCase();
@@ -962,26 +961,6 @@ function setTheme(mode) {
 function applyTheme() {
   const isDark = getTheme() === "dark";
   document.body.classList.toggle("theme-dark", isDark);
-}
-
-function getLocale() {
-  try {
-    const l = (localStorage.getItem(LOCALE_KEY) || "az").toLowerCase();
-    return l === "ru" || l === "en" ? l : "az";
-  } catch (e) {
-    return "az";
-  }
-}
-function setLocale(lang) {
-  const l = lang === "ru" || lang === "en" ? lang : "az";
-  try {
-    localStorage.setItem(LOCALE_KEY, l);
-  } catch (e) {}
-  applyLocale();
-}
-function applyLocale() {
-  const l = getLocale();
-  if (document.documentElement) document.documentElement.lang = l === "ru" ? "ru" : l === "en" ? "en" : "az";
 }
 
 function getCurrentCompanyName() {
@@ -3857,32 +3836,27 @@ function openProfile() {
   const c = meta.companies.find((x) => x.id === meta?.session?.companyId);
   if (!u) return;
   const theme = getTheme();
-  const locale = getLocale();
   openModal(`
-    <h2>Profil</h2>
-    <div class="info-block">
-      <div class="info-row"><div class="info-label">Şirkət</div><div class="info-value">${escapeHtml(c?.name || "-")} (${escapeHtml(c?.id || "")})</div></div>
-      <div class="info-row"><div class="info-label">İstifadəçi</div><div class="info-value">${escapeHtml(u.username)}</div></div>
-      <div class="info-row"><div class="info-label">Rol</div><div class="info-value">${escapeHtml(u.role)}</div></div>
-      <div class="info-row">
-        <div class="info-label">Dil</div>
-        <div class="info-value" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button type="button" class="btn-main ${locale === "az" ? "" : "btn-theme-inactive"}" onclick="setLocale('az');closeMdl();" title="Azərbaycan">AZ</button>
-          <button type="button" class="btn-main ${locale === "en" ? "" : "btn-theme-inactive"}" onclick="setLocale('en');closeMdl();" title="English">EN</button>
-          <button type="button" class="btn-main ${locale === "ru" ? "" : "btn-theme-inactive"}" onclick="setLocale('ru');closeMdl();" title="Русский">RU</button>
-        </div>
+    <div class="profile-modal">
+      <h2 class="profile-title">Profil</h2>
+      <div class="profile-section">
+        <div class="profile-row"><span class="profile-label">Şirkət</span><span class="profile-value">${escapeHtml(c?.name || "-")} <small class="muted">(${escapeHtml(c?.id || "")})</small></span></div>
+        <div class="profile-row"><span class="profile-label">İstifadəçi</span><span class="profile-value">${escapeHtml(u.username)}</span></div>
+        <div class="profile-row"><span class="profile-label">Rol</span><span class="profile-value">${escapeHtml(u.role)}</span></div>
       </div>
-      <div class="info-row">
-        <div class="info-label">Tema</div>
-        <div class="info-value" style="display:flex;gap:8px;align-items:center;">
-          <button type="button" class="btn-main ${theme === "light" ? "" : "btn-theme-inactive"}" onclick="setTheme('light');closeMdl();" title="Açıq tema"><i class="fas fa-sun"></i> Açıq</button>
-          <button type="button" class="btn-main ${theme === "dark" ? "" : "btn-theme-inactive"}" onclick="setTheme('dark');closeMdl();" title="Qaranlıq tema"><i class="fas fa-moon"></i> Qaranlıq</button>
+      <div class="profile-section">
+        <div class="profile-row">
+          <span class="profile-label">Tema</span>
+          <span class="profile-value profile-actions">
+            <button type="button" class="btn-main btn-sm ${theme === "light" ? "" : "btn-theme-inactive"}" onclick="setTheme('light');closeMdl();" title="Açıq"><i class="fas fa-sun"></i> Açıq</button>
+            <button type="button" class="btn-main btn-sm ${theme === "dark" ? "" : "btn-theme-inactive"}" onclick="setTheme('dark');closeMdl();" title="Qaranlıq"><i class="fas fa-moon"></i> Qaranlıq</button>
+          </span>
         </div>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn-main" type="button" onclick="openChangePassword()">Şifrəni dəyiş</button>
-      <button class="btn-cancel" type="button" onclick="logout()">Çıxış</button>
+    <div class="modal-footer modal-footer-actions">
+      <button class="btn-main" type="button" onclick="openChangePassword()"><i class="fas fa-key"></i> Şifrəni dəyiş</button>
+      <button class="btn-cancel" type="button" onclick="logout()"><i class="fas fa-right-from-bracket"></i> Çıxış</button>
       <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
     </div>
   `);
@@ -5471,7 +5445,6 @@ function getLoginCompanyFromUrl() {
 
 async function init() {
   applyTheme();
-  applyLocale();
   window.__loginCompanyFromUrl = getLoginCompanyFromUrl();
   const loadingEl = byId("loadingOverlay");
   if (loadingEl) loadingEl.classList.remove("hidden");

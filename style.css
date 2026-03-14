@@ -52,6 +52,12 @@ body.theme-dark .icon-btn.edit{background:#1e3a5f;color:#93c5fd;}
 body.theme-dark .icon-btn.delete{background:#450a0a;color:#fca5a5;}
 body.theme-dark .info-row{border-bottom-color:#4b5563;}
 body.theme-dark tr.total-row{background:var(--accent-light);border-top-color:var(--accent);}
+body.theme-dark .profile-section{background:#374151;border-color:#4b5563;}
+body.theme-dark .profile-row{border-bottom-color:#4b5563;}
+body.theme-dark .profile-label{color:#9ca3af;}
+body.theme-dark .profile-value{color:#f9fafb;}
+body.theme-dark .profile-value small.muted{color:#9ca3af;}
+body.theme-dark .profile-title{color:#f9fafb;}
 body.theme-dark aside{
   background:#111827;
   border-right-color:var(--border-color);
@@ -561,6 +567,81 @@ tr.total-row td{padding:10px 12px;}
   padding-top:12px;
   padding-bottom:4px;
   border-top:1px solid #f3f4f6;
+}
+.modal-footer-actions{
+  padding-top:16px;
+  padding-bottom:8px;
+  gap:12px;
+}
+
+/* Profil pəncərəsi */
+.profile-modal{
+  max-width:420px;
+}
+.profile-title{
+  margin-bottom:20px;
+  font-size:1.35rem;
+  font-weight:800;
+  color:var(--text-main);
+}
+.profile-section{
+  background:#f9fafb;
+  border:1px solid var(--border-color);
+  border-radius:12px;
+  padding:16px 20px;
+  margin-bottom:16px;
+}
+.profile-section:last-of-type{
+  margin-bottom:0;
+}
+.profile-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:10px 0;
+  border-bottom:1px solid var(--border-color);
+}
+.profile-row:last-child{
+  border-bottom:none;
+  padding-bottom:0;
+}
+.profile-row:first-child{
+  padding-top:0;
+}
+.profile-label{
+  font-size:.8rem;
+  font-weight:700;
+  color:var(--text-muted);
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  flex-shrink:0;
+}
+.profile-value{
+  font-size:.95rem;
+  font-weight:600;
+  color:var(--text-main);
+  text-align:right;
+  word-break:break-word;
+}
+.profile-value small.muted{
+  font-weight:500;
+  color:var(--text-muted);
+}
+.profile-actions{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+.btn-sm{
+  height:36px;
+  padding:0 14px;
+  font-size:.85rem;
+}
+.btn-sm i{
+  margin-right:6px;
 }
 
 .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
