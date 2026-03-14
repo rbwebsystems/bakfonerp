@@ -513,6 +513,8 @@ select{
 }
 .login-logo{display:block;max-width:280px;max-height:100px;width:auto;height:auto;margin:0 auto 20px;background:transparent;}
 .login-card h2{font-size:1.25rem;margin-bottom:12px;}
+.login-company-wrap{margin-bottom:12px;}
+.login-company-wrap .login-label{display:block;font-size:0.9rem;color:var(--muted-color,#666);margin-bottom:4px;}
 
 .search-container{position:relative;display:flex;align-items:center;}
 .search-container input{
