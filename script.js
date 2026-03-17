@@ -4919,9 +4919,10 @@ function renderAll() {
     .join("");
 
   // purchases (latest first) + date filter + pagination
+  const purchStatus = byId("purchStatus")?.value || "active";
   const purchListAll = db.purch
     .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => !p.returnedAt)
+    .filter(({ p }) => (purchStatus === "all" ? true : purchStatus === "returned" ? !!p.returnedAt : !p.returnedAt))
     .filter(({ p }) => inDateRange(p.date, "purchFrom", "purchTo"))
     .sort((a, b) => String(a.p.date).localeCompare(String(b.p.date)) * -1);
 
@@ -4998,8 +4999,10 @@ function renderAll() {
     .join("");
 
   // sales + date filter + pagination
+  const salesStatus = byId("salesStatus")?.value || "active";
   const salesListAll = db.sales
     .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => (salesStatus === "all" ? true : salesStatus === "returned" ? !!s.returnedAt : !s.returnedAt))
     .filter(({ s }) => inDateRange(s.date, "salesFrom", "salesTo"))
     .sort((a, b) => String(a.s.date).localeCompare(String(b.s.date)) * -1);
 

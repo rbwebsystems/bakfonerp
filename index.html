@@ -188,6 +188,11 @@
       <div class="content-header">
         <h1>Alışlar</h1>
         <div class="header-actions">
+          <select id="purchStatus" class="select-small" onchange="renderAll()">
+            <option value="active" selected>Aktiv</option>
+            <option value="returned">Qaytarılanlar</option>
+            <option value="all">Hamısı</option>
+          </select>
           <div class="date-range">
             <input type="date" id="purchFrom" onchange="renderAll()">
             <span>—</span>
@@ -246,6 +251,11 @@
       <div class="content-header">
         <h1>Satışlar</h1>
         <div class="header-actions">
+          <select id="salesStatus" class="select-small" onchange="renderAll()">
+            <option value="active" selected>Aktiv</option>
+            <option value="returned">Qaytarılanlar</option>
+            <option value="all">Hamısı</option>
+          </select>
           <div class="date-range">
             <input type="date" id="salesFrom" onchange="renderAll()">
             <span>—</span>
