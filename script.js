@@ -5431,6 +5431,9 @@ function delItem(type, i) {
   if (type === "purch") {
     const p = db.purch[i];
     if (!p) return;
+    if (n(p.paidTotal) > 0.000001) {
+      return alert("Bu alışın ödənişi var. Kassa balansı pozulmasın deyə silmək olmaz. Lazımdırsa, əks ödəniş (geri qaytarma) əməliyyatı edin.");
+    }
     if (!canDeletePurchase(p)) return alert("Bu alış satılıb (və ya say ilə satış edilib). Əvvəl satışı silin.");
     db.trash.push({ uid: genId(db.trash, 1), type: "purch", item: p, deletedAt, deletedBy });
     logEvent("delete", "purch", { uid: p.uid });
@@ -5442,6 +5445,9 @@ function delItem(type, i) {
   if (type === "sales") {
     const s = db.sales[i];
     if (!s) return;
+    if (n(s.paidTotal) > 0.000001 || (s.payments && Array.isArray(s.payments) && s.payments.length)) {
+      return alert("Bu satışın ödənişi var. Kassa balansı pozulmasın deyə silmək olmaz. Məhsul qaytarılırsa 'Qaytarma' edin (refund varsa kassadan çıxış yazılsın).");
+    }
     db.trash.push({ uid: genId(db.trash, 1), type: "sales", item: s, deletedAt, deletedBy });
     logEvent("delete", "sales", { uid: s.uid });
     db.sales.splice(i, 1);
