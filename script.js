@@ -735,6 +735,7 @@ function sectionLabelAz(id) {
     sales: "Satışlar",
     staff: "Əməkdaşlar",
     debts: "Debitor borclar",
+    overdue: "Vaxtı keçmiş kreditlər",
     creditor: "Kreditor borclar",
     cash: "Kassa",
     accounts: "Hesablar",
@@ -1617,16 +1618,35 @@ function openPurch(idx = null) {
   const p =
     idx !== null
       ? db.purch[idx]
-      : { date: nowISODateTimeLocal(), supp: "", name: "", code: "", qty: 1, imei1: "", imei2: "", seria: "", amount: "", paidTotal: "0", payType: "nagd", employeeId: "" };
+      : { date: nowISODateTimeLocal(), supp: "", name: "", code: "", qty: 1, imei1: "", imei2: "", seria: "", amount: "", paidTotal: "0", payType: "nagd", employeeId: "", paymentAccountId: 1 };
 
   const suppOptions = db.supp.map((s) => `<option value="${escapeAttr(s.co)}" ${p.supp === s.co ? "selected" : ""}>${escapeHtml(s.co)}</option>`).join("");
   const prodOptions = db.prod.map((x) => `<option value="${escapeAttr(x.name)}" ${p.name === x.name ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("");
   const staffOptions = `<option value="">— Əməkdaş seçin —</option>` + (db.staff || []).map((s) => `<option value="${s.uid}" ${String(p.employeeId || "") === String(s.uid) ? "selected" : ""}>${escapeHtml(s.name)}${s.role ? " – " + escapeHtml(s.role) : ""}</option>`).join("");
+  ensureAccounts();
+  const payAccOptions = accountOptionsHtml(Number(p.paymentAccountId || 1));
+  const invVal = idx !== null ? (p.invNo || invFallback("purch", p.uid)) : nextInvNo("purch");
+  const existingInvs = Array.from(new Set((db.purch || []).map((x) => String(x.invNo || "").trim()).filter(Boolean))).slice(0, 2000);
+  const invOptions =
+    `<option value="">— Mövcud qaimə seç (istəyə bağlı) —</option>` +
+    existingInvs
+      .slice()
+      .sort((a, b) => a.localeCompare(b))
+      .map((x) => `<option value="${escapeAttr(x)}">${escapeHtml(x)}</option>`)
+      .join("");
 
   openModal(`
     <h2>${idx !== null ? "Alış Redaktə" : "Yeni Alış"}</h2>
     <form onsubmit="savePurch(event, ${idx})">
       <div class="grid-3">
+        <div class="span-3">
+          <div class="grid-3">
+            <input id="f_p_inv" class="span-2" value="${escapeAttr(invVal)}" placeholder="Qaimə № (məs: AL-001)" ${idx !== null ? "readonly" : ""} required>
+            <select id="f_p_inv_pick" onchange="byId('f_p_inv').value=this.value||byId('f_p_inv').value;" title="Mövcud qaiməni seçib eyni qaiməyə yeni məhsul əlavə edin">
+              ${invOptions}
+            </select>
+          </div>
+        </div>
         <input type="datetime-local" id="f_p_date" value="${escapeAttr(p.date)}" required>
         <select id="f_p_supp" class="span-2" required>
           <option value="">Təchizatçı seç</option>
@@ -1664,6 +1684,7 @@ function openPurch(idx = null) {
           <option value="kredit" ${p.payType === "kredit" ? "selected" : ""}>kredit</option>
         </select>
         <input type="number" step="0.01" id="f_p_paid" value="${escapeAttr(p.paidTotal || "0")}" placeholder="Ödənilən (AZN)">
+        <select id="f_p_pay_acc" class="span-3">${payAccOptions}</select>
       </div>
       <div class="modal-footer">
         <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Mədaxil et"}</button>
@@ -1721,9 +1742,10 @@ function savePurch(e, idx) {
     }
   }
   const employeeId = (val("f_p_staff") || "").trim() || undefined;
+  const invNoVal = (val("f_p_inv") || "").trim();
   const data = {
     uid: idx !== null ? db.purch[idx].uid : genId(db.purch, 1),
-    invNo: idx !== null ? (db.purch[idx].invNo || invFallback("purch", db.purch[idx].uid)) : nextInvNo("purch"),
+    invNo: idx !== null ? (db.purch[idx].invNo || invFallback("purch", db.purch[idx].uid)) : (invNoVal || nextInvNo("purch")),
     date: val("f_p_date"),
     supp: val("f_p_supp"),
     name: val("f_p_prod"),
@@ -1736,6 +1758,7 @@ function savePurch(e, idx) {
     payType: val("f_p_payType"),
     paidTotal: String(Math.max(0, n(val("f_p_paid")))),
     employeeId,
+    paymentAccountId: Number(val("f_p_pay_acc") || (idx !== null ? db.purch[idx]?.paymentAccountId : 1) || 1),
   };
   if (idx !== null) db.purch[idx] = data;
   else db.purch.push(data);
@@ -1747,16 +1770,17 @@ function savePurch(e, idx) {
   const deltaPaid = nextPaid - prevPaid;
   if (Math.abs(deltaPaid) > 0.000001) {
     const date = data.date || nowISODateTimeLocal();
+    const accId = Number(data.paymentAccountId || 1);
     if (deltaPaid > 0) {
       addCashOp({
         type: "out",
         date,
         source: `Təchizatçı ödənişi (${data.supp || "-"})`,
         amount: deltaPaid,
-        note: `Alış #${data.uid} (${escapeHtml(data.invNo || invFallback("purch", data.uid))})`,
+        note: `Alış #${data.uid} (${data.invNo || invFallback("purch", data.uid)})`,
         link: { kind: "purch_payment", purchUid: data.uid },
         meta: { purchUid: data.uid },
-        accountId: 1,
+        accountId: accId,
       });
       logEvent("create", "cash", { type: "out", kind: "purch_payment", purchUid: data.uid, amount: deltaPaid });
     } else {
@@ -1766,10 +1790,10 @@ function savePurch(e, idx) {
         date,
         source: `Təchizatçı qaytarma (${data.supp || "-"})`,
         amount: Math.abs(deltaPaid),
-        note: `Alış ödəniş düzəlişi #${data.uid} (${escapeHtml(data.invNo || invFallback("purch", data.uid))})`,
+        note: `Alış ödəniş düzəlişi #${data.uid} (${data.invNo || invFallback("purch", data.uid)})`,
         link: { kind: "purch_payment_adj", purchUid: data.uid },
         meta: { purchUid: data.uid },
-        accountId: 1,
+        accountId: accId,
       });
       logEvent("create", "cash", { type: "in", kind: "purch_payment_adj", purchUid: data.uid, amount: Math.abs(deltaPaid) });
     }
@@ -2683,6 +2707,13 @@ function openSalePayment(idx) {
   const s = db.sales[idx];
   const rem = saleRemaining(s);
   const defAcc = Number(s.paymentAccountId || 1);
+  const isCredit = String(s.saleType || "").toLowerCase() === "kredit";
+  const payTypeOptions = isCredit
+    ? `<select id="pay_kind" class="span-3" required>
+         <option value="monthly" selected>Aylıq ödəniş</option>
+         <option value="down">İlkin ödəniş</option>
+       </select>`
+    : `<input type="hidden" id="pay_kind" value="regular">`;
   openModal(`
     <h2>Ödəniş et</h2>
     <div class="info-block">
@@ -2694,6 +2725,7 @@ function openSalePayment(idx) {
         <input type="datetime-local" id="pay_date" value="${nowISODateTimeLocal()}" required>
         <input type="number" step="0.01" id="pay_amount" placeholder="Məbləğ (AZN)" class="span-2" required>
         <select id="pay_acc" class="span-3" required>${accountOptionsHtml(defAcc)}</select>
+        ${payTypeOptions}
         <input id="pay_note" placeholder="Qeyd (istəyə bağlı)" class="span-3">
       </div>
       <div class="modal-footer">
@@ -2712,9 +2744,10 @@ function saveSalePayment(e, idx) {
   const date = val("pay_date");
   const amount = Math.max(0, n(val("pay_amount")));
   const accId = Number(val("pay_acc") || 1);
+  const payKind = val("pay_kind") || "regular";
   if (amount <= 0) return;
 
-  addSalePaymentInternal(s, amount, date, "sale_info");
+  addSalePaymentInternal(s, amount, date, payKind === "down" ? "down" : payKind === "monthly" ? "monthly" : "sale_info");
 
   // Cash operation: payment into cash only if this is cash payment (assume nagd) or user pays cash from cash module.
   // Here we treat it as cash-in (kassa) by default.
@@ -2725,7 +2758,7 @@ function saveSalePayment(e, idx) {
     amount: Math.min(amount, amount), // recorded amount input (even if part applied is less, adjust below)
     note: val("pay_note") || `Satış #${s.uid}`,
     link: { kind: "sale", saleUid: s.uid },
-    meta: { customerId: s.customerId },
+    meta: { customerId: s.customerId, payKind },
     accountId: accId,
   }, { clampToApplied: true, applied: Math.min(amount, amountAppliedToSaleLast(s)) });
   logEvent("create", "cash", { type: "in", kind: "sale", amount: Math.min(amount, amountAppliedToSaleLast(s)), saleUid: s.uid });
@@ -2868,6 +2901,14 @@ function addCashOp(op, opts = {}) {
   };
   if (opts.clampToApplied && typeof opts.applied === "number") data.amount = Math.max(0, n(opts.applied));
   if (data.amount <= 0) return;
+  // Prevent negative balance: if outflow and not enough balance, block.
+  if (data.type === "out") {
+    const bal = accountBalance(data.accountId);
+    if (bal + 0.000001 < data.amount) {
+      alert(`Hesab balansı kifayət etmir. Balans: ${money(bal)} AZN, çıxış: ${money(data.amount)} AZN`);
+      return;
+    }
+  }
   db.cash.push(data);
 }
 
@@ -3063,6 +3104,17 @@ function delCashOp(uid) {
 
   // Rollback linked effects
   const kind = c.link?.kind || "";
+  if (kind === "transfer" && c.link?.transferId) {
+    const trId = String(c.link.transferId);
+    // delete both legs
+    const all = (db.cash || []).filter((x) => x.link && x.link.kind === "transfer" && String(x.link.transferId) === trId);
+    for (const leg of all) {
+      const j = db.cash.findIndex((x) => Number(x.uid) === Number(leg.uid));
+      if (j >= 0) db.cash.splice(j, 1);
+    }
+    saveDB();
+    return;
+  }
 
   if (kind === "expense") {
     // only cash record, safe to remove
@@ -3144,6 +3196,7 @@ function openCashOp() {
         <select id="cash_kind" class="span-3" onchange="toggleCashKind()">
           <option value="cust_pay">Müştəri ödənişi (Debitor)</option>
           <option value="supp_pay">Təchizatçı ödənişi (Kreditor)</option>
+          <option value="transfer">Hesablar arası transfer</option>
           <option value="income">Mədaxil (digər)</option>
           <option value="expense">Xərc</option>
         </select>
@@ -3151,8 +3204,15 @@ function openCashOp() {
         <input type="datetime-local" id="cash_date" value="${nowISODateTimeLocal()}" required>
         <input type="number" step="0.01" id="cash_amount" class="span-2" placeholder="Məbləğ (AZN)" required>
 
-        <div class="span-3">
+        <div id="cash_acc_box" class="span-3">
           <select id="cash_acc" class="span-3" required>${accOptions}</select>
+        </div>
+
+        <div id="cash_transfer_box" class="span-3" style="display:none;">
+          <div class="grid-3">
+            <select id="cash_from_acc" class="span-3" required>${accOptions}</select>
+            <select id="cash_to_acc" class="span-3" required>${accOptions}</select>
+          </div>
         </div>
 
         <div id="cash_customer_box" class="span-3">
@@ -3221,32 +3281,56 @@ function toggleCashKind() {
   const suppBox = byId("cash_supplier_box");
   const expBox = byId("cash_expense_box");
   const incBox = byId("cash_income_box");
+  const trBox = byId("cash_transfer_box");
+  const accBox = byId("cash_acc_box");
   if (!custBox || !expBox) return;
   if (kind === "expense") {
     custBox.style.display = "none";
     if (suppBox) suppBox.style.display = "none";
     if (incBox) incBox.style.display = "none";
     expBox.style.display = "";
+    if (trBox) trBox.style.display = "none";
+    if (accBox) accBox.style.display = "";
     byId("cash_customer").required = false;
+    byId("cash_acc").required = true;
   } else {
     expBox.style.display = "none";
     if (kind === "supp_pay") {
       custBox.style.display = "none";
       if (suppBox) suppBox.style.display = "";
       if (incBox) incBox.style.display = "none";
+      if (trBox) trBox.style.display = "none";
+      if (accBox) accBox.style.display = "";
       byId("cash_customer").required = false;
+      byId("cash_acc").required = true;
       refreshSupplierInvoices();
+    } else if (kind === "transfer") {
+      custBox.style.display = "none";
+      if (suppBox) suppBox.style.display = "none";
+      if (incBox) incBox.style.display = "none";
+      if (trBox) trBox.style.display = "";
+      if (accBox) accBox.style.display = "none";
+      byId("cash_customer").required = false;
+      byId("cash_acc").required = false;
+      if (byId("cash_from_acc")) byId("cash_from_acc").required = true;
+      if (byId("cash_to_acc")) byId("cash_to_acc").required = true;
     } else if (kind === "income") {
       custBox.style.display = "none";
       if (suppBox) suppBox.style.display = "none";
       if (incBox) incBox.style.display = "";
+      if (trBox) trBox.style.display = "none";
+      if (accBox) accBox.style.display = "";
       byId("cash_customer").required = false;
+      byId("cash_acc").required = true;
       toggleIncomeSourceBox();
     } else {
       custBox.style.display = "";
       if (suppBox) suppBox.style.display = "none";
       if (incBox) incBox.style.display = "none";
+      if (trBox) trBox.style.display = "none";
+      if (accBox) accBox.style.display = "";
       byId("cash_customer").required = true;
+      byId("cash_acc").required = true;
       refreshCustomerInvoices();
     }
   }
@@ -3331,6 +3415,38 @@ function saveCashOp(e) {
   const accId = Number(val("cash_acc") || 1);
 
   if (amount <= 0) return;
+
+  if (kind === "transfer") {
+    const fromAcc = Number(val("cash_from_acc") || 0);
+    const toAcc = Number(val("cash_to_acc") || 0);
+    if (!fromAcc || !toAcc) return alert("Hesab seçin.");
+    if (fromAcc === toAcc) return alert("Eyni hesablar arasında transfer olmaz.");
+    const bal = accountBalance(fromAcc);
+    if (bal + 0.000001 < amount) return alert(`Hesab balansı kifayət etmir. Balans: ${money(bal)} AZN`);
+    const trId = "tr_" + String(Date.now()) + "_" + String(genId(db.cash, 1));
+    addCashOp({
+      type: "out",
+      date,
+      source: `Transfer → ${db.accounts.find((a) => a.uid === toAcc)?.name || toAcc}`,
+      amount,
+      note,
+      link: { kind: "transfer", transferId: trId, from: fromAcc, to: toAcc },
+      accountId: fromAcc,
+    });
+    addCashOp({
+      type: "in",
+      date,
+      source: `Transfer ← ${db.accounts.find((a) => a.uid === fromAcc)?.name || fromAcc}`,
+      amount,
+      note,
+      link: { kind: "transfer", transferId: trId, from: fromAcc, to: toAcc },
+      accountId: toAcc,
+    });
+    logEvent("create", "cash", { type: "transfer", kind: "transfer", amount, from: fromAcc, to: toAcc });
+    saveDB();
+    closeMdl();
+    return;
+  }
 
   if (kind === "income") {
     const from = val("cash_income_from");
@@ -3922,6 +4038,7 @@ function openUser(uidOrNull = null) {
     "sales",
     "staff",
     "debts",
+    "overdue",
     "creditor",
     "cash",
     "accounts",
@@ -5046,7 +5163,6 @@ function renderAll() {
 
   // stock (do NOT depend on purch date/status filters; show all inventory)
   const stockListAll = (db.purch || [])
-    .filter((p) => inDateRange(p.date, "purchFrom", "purchTo")) // keep existing date range as a global filter if user uses it
     .slice(0, 5000) /* safety */
     .map((p) => ({ p }));
 
@@ -5221,6 +5337,71 @@ function renderAll() {
   const creditQ = byId("srcCreditOnly")?.value || "";
   if (creditQ) filterCreditOnly();
 
+  // overdue credits (monthly installments)
+  const overdueBody = byId("tblOverdue");
+  if (overdueBody) {
+    const view = byId("overdueView")?.value || "overdue";
+    const today = new Date();
+    const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const toDayStart = (iso) => {
+      const [y, m, d] = String(iso || "").slice(0, 10).split("-").map(Number);
+      if (!y || !m || !d) return null;
+      return new Date(y, m - 1, d).getTime();
+    };
+    const todayT = toDayStart(todayISO);
+
+    const rows = [];
+    (db.sales || [])
+      .filter((s) => !s.returnedAt && String(s.saleType || "").toLowerCase() === "kredit")
+      .forEach((s) => {
+        const sched = buildCreditSchedule(s);
+        for (const r of sched.rows) {
+          if (r.remaining <= 0.000001) continue;
+          const dueT = toDayStart(r.due);
+          if (dueT == null || todayT == null) continue;
+          const daysLate = Math.floor((todayT - dueT) / dayMs);
+          const isOverdue = daysLate >= 1;
+          const isToday = daysLate === 0;
+          if (view === "overdue" && !isOverdue) continue;
+          if (view === "today" && !isToday) continue;
+          const inv = s.invNo || invFallback("sales", s.uid);
+          rows.push({
+            customer: s.customerName || "-",
+            inv,
+            saleDate: s.date,
+            due: r.due,
+            monthly: r.amount,
+            remaining: r.remaining,
+            daysLate: Math.max(0, daysLate),
+            saleIdx: db.sales.findIndex((x) => Number(x.uid) === Number(s.uid)),
+          });
+        }
+      });
+
+    rows.sort((a, b) => String(a.due).localeCompare(String(b.due)));
+    overdueBody.innerHTML =
+      rows
+        .map((x, i) => {
+          const late = x.daysLate;
+          return `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(x.customer)}</td>
+            <td>${escapeHtml(x.inv)}</td>
+            <td>${fmtDT(x.saleDate)}</td>
+            <td>${escapeHtml(x.due)}</td>
+            <td>${money(x.monthly)} AZN</td>
+            <td>${money(x.remaining)} AZN</td>
+            <td>${late}</td>
+            <td class="tbl-actions">
+              <button class="icon-btn info" onclick="openSaleInfo(${x.saleIdx})" title="Info"><i class="fas fa-circle-info"></i></button>
+            </td>
+          </tr>`;
+        })
+        .join("") || `<tr><td colspan="9">Məlumat yoxdur</td></tr>`;
+  }
+
   // creditor (suppliers) + date filter + pagination
   const credStatus = byId("credStatus")?.value || "open";
   const groupsMap = new Map();
@@ -5284,21 +5465,74 @@ function renderAll() {
   const cashRows = paginate(cashRowsAll, "cash", cashPageSize, "cashPageInfo");
 
   byId("tblCash").innerHTML = cashRows
-    .map(
-      (c, i) => `
+    .map((c, i) => {
+      const payKind = c.meta?.payKind || "";
+      const payBadge =
+        c.link?.kind === "sale" && payKind
+          ? `<small class="muted" style="margin-left:8px;">(${payKind === "down" ? "ilkin" : payKind === "monthly" ? "aylıq" : payKind})</small>`
+          : "";
+      const invInfo = (() => {
+        const kind = c.link?.kind || "";
+        if (kind === "sale" || kind === "sale_payment") {
+          const s = db.sales.find((x) => Number(x.uid) === Number(c.link?.saleUid));
+          if (!s) return "";
+          const inv = s.invNo || invFallback("sales", s.uid);
+          return `Qaimə: ${inv}`;
+        }
+        if (kind === "debtor_payment") {
+          const allocs = c.meta?.allocations || [];
+          const invs = Array.from(
+            new Set(
+              allocs
+                .map((a) => {
+                  const saleUid = a.saleUid ?? a.salesUid ?? null;
+                  const s = saleUid ? db.sales.find((x) => Number(x.uid) === Number(saleUid)) : null;
+                  return s ? (s.invNo || invFallback("sales", s.uid)) : null;
+                })
+                .filter(Boolean)
+            )
+          );
+          return invs.length ? `Qaimə: ${invs.join(", ")}` : "";
+        }
+        if (kind === "creditor_invoice_payment") {
+          const p = db.purch.find((x) => Number(x.uid) === Number(c.link?.purchUid));
+          if (!p) return "";
+          const inv = p.invNo || invFallback("purch", p.uid);
+          return `Qaimə: ${inv}`;
+        }
+        if (kind === "creditor_payment") {
+          const allocs = c.meta?.allocations || [];
+          const invs = Array.from(
+            new Set(
+              allocs
+                .map((a) => {
+                  const p = db.purch.find((x) => Number(x.uid) === Number(a.purchUid));
+                  return p ? (p.invNo || invFallback("purch", p.uid)) : null;
+                })
+                .filter(Boolean)
+            )
+          );
+          return invs.length ? `Qaimə: ${invs.join(", ")}` : "";
+        }
+        return "";
+      })();
+      const noteHtml = invInfo
+        ? `${escapeHtml(c.note || "")}<div class="muted" style="font-size:.85em;margin-top:2px;">${escapeHtml(invInfo)}</div>`
+        : escapeHtml(c.note || "");
+      return `
     <tr>
       <td>${i + 1}</td>
       <td>${c.type === "in" ? "Gəlir" : "Xərc"}</td>
       <td>${fmtDT(c.date)}</td>
-      <td>${escapeHtml(c.source)}</td>
+      <td>${escapeHtml(c.source)}${payBadge}</td>
       <td class="${c.type === "in" ? "amt-in" : "amt-out"}">${c.type === "in" ? "+" : "-"}${money(c.amount)} AZN</td>
-      <td>${escapeHtml(c.note || "")}</td>
+      <td>${noteHtml}</td>
       <td class="tbl-actions">
         ${userCanEdit() ? `<button class="icon-btn edit" onclick="openEditCashOp(${c.uid})" title="Redaktə"><i class="fas fa-pen"></i></button>` : ""}
         ${userCanDelete() ? `<button class="icon-btn delete" onclick="delCashOp(${c.uid})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
       </td>
-    </tr>`
-    )
+    </tr>`;
+    })
     .join("");
 
   const incomeF = cashRowsAll.filter((c) => c.type === "in").reduce((a, b) => a + n(b.amount), 0);
