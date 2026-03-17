@@ -4389,6 +4389,63 @@ function genQr() {
   });
 }
 
+function refundedForSale(saleUid) {
+  return (db.cash || [])
+    .filter((c) => c.type === "out" && c.link && c.link.kind === "return_refund" && String(c.link.saleUid) === String(saleUid))
+    .reduce((a, c) => a + n(c.amount), 0);
+}
+
+function openReturnedSalesCreditReport() {
+  ensureAuditTrash();
+  const rows = (db.sales || [])
+    .filter((s) => !!s.returnedAt)
+    .map((s) => {
+      const paid = Math.max(0, n(s.paidTotal));
+      const refunded = refundedForSale(s.uid);
+      const creditLeft = Math.max(0, paid - refunded);
+      return { s, paid, refunded, creditLeft };
+    })
+    .filter((x) => x.creditLeft > 0.000001)
+    .sort((a, b) => (a.s.returnedAt > b.s.returnedAt ? -1 : 1));
+
+  const body = rows
+    .map((x, i) => {
+      const inv = x.s.invNo || invFallback("sales", x.s.uid);
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${escapeHtml(inv)}</td>
+          <td>${fmtDT(x.s.returnedAt || x.s.date)}</td>
+          <td>${escapeHtml(x.s.customerName || "-")}</td>
+          <td>${money(x.paid)} AZN</td>
+          <td>${money(x.refunded)} AZN</td>
+          <td><strong>${money(x.creditLeft)} AZN</strong></td>
+        </tr>`;
+    })
+    .join("");
+
+  const totalLeft = rows.reduce((a, x) => a + x.creditLeft, 0);
+  openModal(`
+    <h2>Qaytarma avansları (kassada qalan)</h2>
+    <p class="muted" style="margin:0 0 12px 0;">
+      Qaytarılan satışlarda ödənən məbləğ geri qaytarılmayıbsa, bu məbləğ kassada qalır.
+      Burada: <strong>Avans = Ödənən − Refund</strong>.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Qaimə</th><th>Qaytarma tarixi</th><th>Müştəri</th><th>Ödənən</th><th>Refund</th><th>Kassada qalan</th></tr></thead>
+        <tbody>
+          ${body || `<tr><td colspan="7">Qaytarma avansı yoxdur.</td></tr>`}
+          ${body ? `<tr class="total-row"><td colspan="6"><strong>Cəmi</strong></td><td><strong>${money(totalLeft)} AZN</strong></td></tr>` : ""}
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
 function exportTableToCsv(tableBodyId, filename) {
   const tbody = byId(tableBodyId);
   if (!tbody) return alert("Cədvəl tapılmadı.");
@@ -5593,6 +5650,7 @@ Object.assign(window, {
   importCompany,
   exportCsvCurrent,
   recalcAll,
+  openReturnedSalesCreditReport,
   openQrTool,
   genQr,
   clearAudit,
