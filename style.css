@@ -79,9 +79,9 @@ body.theme-dark .last-saved{
   background:rgba(255,255,255,.06);
   border-color:rgba(255,255,255,.08);
 }
-body.theme-dark .nav-link{color:#f9fafb;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12);box-shadow:none;}
+body.theme-dark .nav-link{color:#f9fafb;background:transparent;border-color:transparent;box-shadow:none;}
 body.theme-dark .nav-link:hover{background:rgba(255,255,255,.12);}
-body.theme-dark .nav-link.active{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.18);box-shadow:none;}
+body.theme-dark .nav-link.active{background:rgba(255,255,255,.14);color:#fff;border-color:transparent;box-shadow:none;}
 
 /* Nav "window fly" transition ghost */
 /* Animations disabled */
@@ -316,8 +316,8 @@ body.theme-dark .profile-dropdown-sep{background:#4b5563;}
   cursor:pointer;
   border-radius:10px;
   margin-bottom:6px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.14);
+  background:transparent;
+  border:1px solid transparent;
   position:relative;
   font-size:.95rem;
   width:100%;
@@ -336,7 +336,7 @@ body.theme-dark .profile-dropdown-sep{background:#4b5563;}
 .nav-link.active{
   background:rgba(255,255,255,.14);
   color:#fff;
-  border-color:rgba(255,255,255,.22);
+  border-color:transparent;
   box-shadow:none;
 }
 .nav-link.active::after{
