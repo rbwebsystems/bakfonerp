@@ -4237,6 +4237,7 @@ function buildMelumatHtml(q) {
     shownKeys.add(key);
 
     const purchStaffName = getStaffName(p.employeeId);
+    const purchStatusText = p.returnedAt ? "QAYTARILIB" : "AKTİV";
 
     let saleHtml = "";
     if (purchIsBulk(p)) {
@@ -4283,6 +4284,7 @@ function buildMelumatHtml(q) {
 
     blocks.push(`
       <div class="info-block melumat-block" style="margin-bottom:16px;">
+        <div class="info-row"><div class="info-label">Status</div><div class="info-value">${escapeHtml(purchStatusText)}</div></div>
         <div class="info-row"><div class="info-label">Məhsul (marka/model)</div><div class="info-value">${escapeHtml(p.name || "-")}</div></div>
         <div class="info-row"><div class="info-label">Kod</div><div class="info-value">${escapeHtml(p.code || "-")}</div></div>
         <div class="info-row"><div class="info-label">IMEI 1</div><div class="info-value">${escapeHtml(p.imei1 || "-")}</div></div>
@@ -5017,16 +5019,22 @@ function renderAll() {
     })
     .join("");
 
-  // stock
-  byId("tblStock").innerHTML = purchListAll
+  // stock (do NOT depend on purch date/status filters; show all inventory)
+  const stockListAll = (db.purch || [])
+    .filter((p) => inDateRange(p.date, "purchFrom", "purchTo")) // keep existing date range as a global filter if user uses it
+    .slice(0, 5000) /* safety */
+    .map((p) => ({ p }));
+
+  byId("tblStock").innerHTML = stockListAll
     .slice(0, 2000) /* safety */
     .map(({ p }, i) => {
       const key = itemKeyFromPurch(p);
       const remQty = purchRemainingQty(p);
-      const isSold = remQty <= 0;
-      const statusText = isSold ? "SATILIB" : "ANBARDA";
-      const rowClass = isSold ? "row-sold" : "row-stock";
-      const badgeClass = isSold ? "badge-sold" : "badge-stock";
+      const isReturned = !!p.returnedAt;
+      const isSold = !isReturned && remQty <= 0;
+      const statusText = isReturned ? "QAYTARILIB" : isSold ? "SATILIB" : "ANBARDA";
+      const rowClass = isReturned ? "row-sold" : isSold ? "row-sold" : "row-stock";
+      const badgeClass = isReturned ? "badge-sold" : isSold ? "badge-sold" : "badge-stock";
       return `
       <tr class="${rowClass}">
         <td>${i + 1}</td>
