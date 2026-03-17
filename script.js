@@ -439,6 +439,52 @@ function logEvent(action, target, details = {}) {
   if (db.audit.length > 5000) db.audit = db.audit.slice(db.audit.length - 5000);
 }
 
+function auditExplain(a) {
+  if (!a) return "-";
+  const act = String(a.action || "");
+  const tgt = String(a.target || "");
+  const d = a.details && typeof a.details === "object" ? a.details : {};
+
+  const verbAz =
+    act === "create" ? "yaratdı" :
+    act === "update" ? "yenilədi" :
+    act === "delete" ? "sildi" :
+    act === "restore" ? "bərpa etdi" :
+    act === "export" ? "export etdi" :
+    act === "import" ? "import etdi" :
+    act === "reset" ? "sıfırladı" :
+    act === "recalc" ? "yenidən hesabladı" :
+    act;
+
+  const targetAz =
+    tgt === "sales" ? "satış" :
+    tgt === "purch" ? "alış" :
+    tgt === "cash" ? "kassa əməliyyatı" :
+    tgt === "cust" ? "müştəri" :
+    tgt === "supp" ? "təchizatçı" :
+    tgt === "prod" ? "məhsul" :
+    tgt === "staff" ? "əməkdaş" :
+    tgt === "accounts" ? "hesab" :
+    tgt === "users" ? "istifadəçi" :
+    tgt === "company" ? "şirkət" :
+    tgt === "settings" ? "ayarlar" :
+    tgt === "tools" ? "alətlər" :
+    tgt === "trash" ? "səbət" :
+    tgt;
+
+  const uid = d.uid ?? d.saleUid ?? d.purchUid ?? d.customerId ?? d.accountId ?? d.transferId ?? null;
+  const inv = d.invNo || d.inv || null;
+  const amount = d.amount != null ? `${money(d.amount)} AZN` : null;
+  const extraBits = [];
+  if (inv) extraBits.push(`Qaimə: ${inv}`);
+  if (uid != null && uid !== "") extraBits.push(`ID: ${uid}`);
+  if (amount) extraBits.push(`Məbləğ: ${amount}`);
+  if (d.kind) extraBits.push(`Növ: ${d.kind}`);
+
+  const base = `${verbAz} (${targetAz || "-"})`;
+  return extraBits.length ? `${base} • ${extraBits.join(" • ")}` : base;
+}
+
 function loadMeta() {
   try {
     const raw = localStorage.getItem(META_KEY);
@@ -665,6 +711,7 @@ function toast(msg, kind = "ok", ms = 2600) {
 function openAuditDetails(uid) {
   const a = (db.audit || []).find((x) => Number(x.uid) === Number(uid));
   if (!a) return;
+  const explain = auditExplain(a);
   let detailsText = "";
   try {
     detailsText = JSON.stringify(a.details ?? {}, null, 2);
@@ -697,6 +744,7 @@ function openAuditDetails(uid) {
       <div class="info-row"><div class="info-label">İstifadəçi</div><div class="info-value">${escapeHtml(a.user || "-")}</div></div>
       <div class="info-row"><div class="info-label">Əməliyyat</div><div class="info-value">${escapeHtml(a.action || "-")}</div></div>
       <div class="info-row"><div class="info-label">Hədəf</div><div class="info-value">${escapeHtml(a.target || "-")}</div></div>
+      <div class="info-row"><div class="info-label">Açıqlama</div><div class="info-value">${escapeHtml(explain)}</div></div>
     </div>
     <div class="card" style="padding:0;">
       ${hasDetails ? "" : `<div class="muted" style="padding:12px 14px;">Bu əməliyyat üçün detallı məlumat yazılmayıb.</div>`}
@@ -6650,7 +6698,7 @@ function renderAll() {
           <td>${i + 1}</td>
           <td>${fmtDT(a.ts)}</td>
           <td>${escapeHtml(a.user || "-")}</td>
-          <td>${escapeHtml(a.action || "-")}</td>
+          <td>${escapeHtml(auditExplain(a))}</td>
           <td>${escapeHtml(a.target || "-")}</td>
           <td><button class="btn-mini-pay" type="button" onclick="openAuditDetails(${a.uid})">Bax</button></td>
         </tr>`;
