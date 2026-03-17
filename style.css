@@ -79,9 +79,9 @@ body.theme-dark .last-saved{
   background:rgba(255,255,255,.06);
   border-color:rgba(255,255,255,.08);
 }
-body.theme-dark .nav-link{color:#f9fafb;background:transparent;border-color:transparent;box-shadow:none;}
+body.theme-dark .nav-link{color:#f9fafb;background:transparent;border-color:transparent;border-top-color:rgba(255,255,255,.12);border-right-color:rgba(255,255,255,.12);box-shadow:none;}
 body.theme-dark .nav-link:hover{background:rgba(255,255,255,.12);}
-body.theme-dark .nav-link.active{background:rgba(255,255,255,.14);color:#fff;border-color:transparent;box-shadow:none;}
+body.theme-dark .nav-link.active{background:rgba(255,255,255,.14);color:#fff;border-top-color:rgba(255,255,255,.22);border-right-color:rgba(255,255,255,.22);border-left-color:transparent;border-bottom-color:transparent;box-shadow:none;}
 
 /* Nav "window fly" transition ghost */
 /* Animations disabled */
@@ -318,6 +318,8 @@ body.theme-dark .profile-dropdown-sep{background:#4b5563;}
   margin-bottom:6px;
   background:transparent;
   border:1px solid transparent;
+  border-top-color:rgba(255,255,255,.14);
+  border-right-color:rgba(255,255,255,.14);
   position:relative;
   font-size:.95rem;
   width:100%;
@@ -336,8 +338,35 @@ body.theme-dark .profile-dropdown-sep{background:#4b5563;}
 .nav-link.active{
   background:rgba(255,255,255,.14);
   color:#fff;
-  border-color:transparent;
+  border-top-color:rgba(255,255,255,.35);
+  border-right-color:rgba(255,255,255,.35);
   box-shadow:none;
+}
+.nav-link.active::before{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  top:0;
+  height:1px;
+  background:rgba(52, 211, 153, .95);
+  box-shadow:0 0 10px rgba(52, 211, 153, .55), 0 0 22px rgba(52, 211, 153, .35);
+  border-top-left-radius:10px;
+  border-top-right-radius:10px;
+  pointer-events:none;
+}
+.nav-link.active::after{
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  right:0;
+  width:2px;
+  background:rgba(52, 211, 153, .95);
+  box-shadow:0 0 10px rgba(52, 211, 153, .55), 0 0 22px rgba(52, 211, 153, .35);
+  border-top-right-radius:10px;
+  border-bottom-right-radius:10px;
+  pointer-events:none;
 }
 .nav-link.active::after{
   content:"";
