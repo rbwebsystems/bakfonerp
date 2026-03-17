@@ -4106,7 +4106,8 @@ function buildMelumatHtml(q) {
 
   db.purch.forEach((p, pIdx) => {
     const inv = p.invNo || invFallback("purch", p.uid);
-    const hay = `${inv} ${p.supp} ${p.name} ${p.imei1} ${p.imei2} ${p.seria} ${p.code}`.toLowerCase();
+    const unitPurch = purchIsBulk(p) ? (n(p.amount) / Math.max(1, Math.floor(n(p.qty || 1)))) : n(p.amount);
+    const hay = `${inv} ${p.supp} ${p.name} ${p.imei1} ${p.imei2} ${p.seria} ${p.code} ${p.amount} ${money(p.amount)} ${money(unitPurch)}`.toLowerCase();
     if (!hay.includes(qq)) return;
     const key = itemKeyFromPurch(p);
     if (shownKeys.has(key)) return;
@@ -4120,14 +4121,14 @@ function buildMelumatHtml(q) {
       saleHtml = sales.length
         ? sales.map((s) => {
             const saleStaffName = s.employeeName || getStaffName(s.employeeId);
-            return `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • Satış edən: ${escapeHtml(saleStaffName)}</div></div>`;
+            return `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • ${money(s.amount)} AZN • Satış edən: ${escapeHtml(saleStaffName)}</div></div>`;
           }).join("")
         : "<div class=\"info-row\"><div class=\"info-label\">Satış</div><div class=\"info-value\">Satılmayıb</div></div>";
     } else {
       const s = (db.sales || []).find((s) => !s.returnedAt && s.itemKey === key);
       const saleStaffName = s ? (s.employeeName || getStaffName(s.employeeId)) : "-";
       saleHtml = s
-        ? `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • Satış edən: ${escapeHtml(saleStaffName)}</div></div>`
+        ? `<div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(s.invNo || invFallback("sales", s.uid))} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • ${money(s.amount)} AZN • Satış edən: ${escapeHtml(saleStaffName)}</div></div>`
         : "<div class=\"info-row\"><div class=\"info-label\">Satış</div><div class=\"info-value\">Satılmayıb</div></div>";
     }
 
@@ -4139,6 +4140,7 @@ function buildMelumatHtml(q) {
         <div class="info-row"><div class="info-label">IMEI 2</div><div class="info-value">${escapeHtml(p.imei2 || "-")}</div></div>
         <div class="info-row"><div class="info-label">Seriya №</div><div class="info-value">${escapeHtml(p.seria || "-")}</div></div>
         <div class="info-row"><div class="info-label">Alış</div><div class="info-value">${escapeHtml(inv)} • ${escapeHtml(p.supp || "-")} • ${fmtDT(p.date)}</div></div>
+        <div class="info-row"><div class="info-label">Alış məbləğ</div><div class="info-value">${money(p.amount)} AZN${purchIsBulk(p) ? ` • 1 ədəd: ${money(unitPurch)} AZN` : ""}</div></div>
         <div class="info-row"><div class="info-label">Alış edən əməkdaş</div><div class="info-value">${escapeHtml(purchStaffName)}</div></div>
         ${saleHtml}
       </div>
@@ -4147,7 +4149,8 @@ function buildMelumatHtml(q) {
 
   db.sales.forEach((s, sIdx) => {
     const inv = s.invNo || invFallback("sales", s.uid);
-    const hay = `${inv} ${s.customerName} ${s.productName} ${s.imei1} ${s.imei2} ${s.seria} ${s.code}`.toLowerCase();
+    const unitSale = Math.max(1, Math.floor(n(s.qty || 1))) > 1 ? (n(s.amount) / Math.max(1, Math.floor(n(s.qty || 1)))) : n(s.amount);
+    const hay = `${inv} ${s.customerName} ${s.productName} ${s.imei1} ${s.imei2} ${s.seria} ${s.code} ${s.amount} ${money(s.amount)} ${money(unitSale)}`.toLowerCase();
     if (!hay.includes(qq)) return;
     const key = s.itemKey || (s.bulkPurchUid ? `BULK:${s.bulkPurchUid}` : null);
     if (key && shownKeys.has(key)) return;
@@ -4172,8 +4175,9 @@ function buildMelumatHtml(q) {
         <div class="info-row"><div class="info-label">IMEI 2</div><div class="info-value">${escapeHtml(imei2)}</div></div>
         <div class="info-row"><div class="info-label">Seriya №</div><div class="info-value">${escapeHtml(seria)}</div></div>
         <div class="info-row"><div class="info-label">Alış</div><div class="info-value">${escapeHtml(purchInv)} • ${escapeHtml(supp)} • ${purchDate}</div></div>
+        ${p ? `<div class="info-row"><div class="info-label">Alış məbləğ</div><div class="info-value">${money(p.amount)} AZN${purchIsBulk(p) ? ` • 1 ədəd: ${money(n(p.amount) / Math.max(1, Math.floor(n(p.qty || 1))))} AZN` : ""}</div></div>` : ""}
         <div class="info-row"><div class="info-label">Alış edən əməkdaş</div><div class="info-value">${escapeHtml(purchStaffName)}</div></div>
-        <div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(inv)} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)}</div></div>
+        <div class="info-row"><div class="info-label">Satış</div><div class="info-value">${escapeHtml(inv)} • ${escapeHtml(s.customerName || "-")} • ${fmtDT(s.date)} • ${saleTypeLabel(s.saleType)} • ${money(s.amount)} AZN${Math.max(1, Math.floor(n(s.qty || 1))) > 1 ? ` • 1 ədəd: ${money(unitSale)} AZN` : ""}</div></div>
         <div class="info-row"><div class="info-label">Satış edən əməkdaş</div><div class="info-value">${escapeHtml(saleStaffName)}</div></div>
       </div>
     `);
