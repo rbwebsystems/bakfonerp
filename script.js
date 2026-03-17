@@ -1092,36 +1092,6 @@ function showSec(id, el) {
   const sec = document.getElementById(id);
   if (sec) {
     sec.classList.add("active");
-    // macOS-like "minimize/zoom" feel: fly from nav button to section
-    try {
-      if (el && el.getBoundingClientRect) {
-        const r0 = el.getBoundingClientRect();
-        const r1 = sec.getBoundingClientRect();
-        const fly = document.createElement("div");
-        fly.className = "nav-fly";
-        fly.style.left = `${r0.left}px`;
-        fly.style.top = `${r0.top}px`;
-        fly.style.width = `${Math.max(40, r0.width)}px`;
-        fly.style.height = `${Math.max(24, r0.height)}px`;
-        document.body.appendChild(fly);
-        const dx = r1.left - r0.left;
-        const dy = r1.top - r0.top;
-        const sx = Math.max(0.05, r1.width / Math.max(1, r0.width));
-        const sy = Math.max(0.05, r1.height / Math.max(1, r0.height));
-        fly.animate(
-          [
-            { transform: "translate(0px,0px) scale(1,1)", opacity: 0.9, filter: "blur(0px)" },
-            { transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})`, opacity: 0, filter: "blur(6px)" },
-          ],
-          { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" }
-        ).onfinish = () => fly.remove();
-      }
-    } catch {}
-    // trigger enter animation every time
-    sec.classList.remove("anim-enter");
-    void sec.offsetWidth; // reflow
-    sec.classList.add("anim-enter");
-    setTimeout(() => sec.classList.remove("anim-enter"), 500);
   }
   if (el) el.classList.add("active");
   refreshHeaderBar();
