@@ -634,6 +634,31 @@ function toast(msg, kind = "ok", ms = 2600) {
 function openAuditDetails(uid) {
   const a = (db.audit || []).find((x) => Number(x.uid) === Number(uid));
   if (!a) return;
+  let detailsText = "";
+  try {
+    detailsText = JSON.stringify(a.details ?? {}, null, 2);
+  } catch (e) {
+    try {
+      detailsText = String(a.details ?? "");
+    } catch {
+      detailsText = "";
+    }
+  }
+  const hasDetails =
+    detailsText.trim() !== "" &&
+    detailsText.trim() !== "{}" &&
+    detailsText.trim() !== "null" &&
+    detailsText.trim() !== "undefined";
+  let rawText = "";
+  try {
+    rawText = JSON.stringify(a ?? {}, null, 2);
+  } catch (e) {
+    try {
+      rawText = String(a ?? "");
+    } catch {
+      rawText = "";
+    }
+  }
   openModal(`
     <h2>Audit detalları</h2>
     <div class="info-block">
@@ -643,7 +668,10 @@ function openAuditDetails(uid) {
       <div class="info-row"><div class="info-label">Hədəf</div><div class="info-value">${escapeHtml(a.target || "-")}</div></div>
     </div>
     <div class="card" style="padding:0;">
-      <pre style="margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(JSON.stringify(a.details || {}, null, 2))}</pre>
+      ${hasDetails ? "" : `<div class="muted" style="padding:12px 14px;">Bu əməliyyat üçün detallı məlumat yazılmayıb.</div>`}
+      <pre style="margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(detailsText || "{}")}</pre>
+      <div class="muted" style="padding:10px 14px;border-top:1px solid rgba(0,0,0,.06);">Raw</div>
+      <pre style="margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(rawText || "{}")}</pre>
     </div>
     <div class="modal-footer">
       <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
