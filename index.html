@@ -236,6 +236,23 @@
       <div class="content-header">
         <h1>Anbar</h1>
         <div class="header-actions">
+          <select id="stockStatus" class="select-small" onchange="renderAll()">
+            <option value="all" selected>Hamısı</option>
+            <option value="stock">Anbardadır</option>
+            <option value="sold">Satılıb</option>
+            <option value="returned">Qaytarılıb</option>
+          </select>
+          <div class="date-range">
+            <input type="date" id="stockFrom" onchange="renderAll()">
+            <span>—</span>
+            <input type="date" id="stockTo" onchange="renderAll()">
+          </div>
+          <select id="stockCat" class="select-small" onchange="onStockCatChange()">
+            <option value="" selected>Kateqoriya (hamısı)</option>
+          </select>
+          <select id="stockSubcat" class="select-small" onchange="renderAll()">
+            <option value="" selected>Alt kateqoriya (hamısı)</option>
+          </select>
           <div class="search-container">
             <input type="text" placeholder="Axtar..." onkeyup="filterTable('tblStock', this.value)">
             <button class="search-btn" type="button"><i class="fas fa-search"></i></button>

@@ -485,6 +485,48 @@ function auditExplain(a) {
   return extraBits.length ? `${base} • ${extraBits.join(" • ")}` : base;
 }
 
+function productMetaByName(name) {
+  const nm = String(name || "").trim().toLowerCase();
+  if (!nm) return { cat: "", subCat: "" };
+  const p = (db.prod || []).find((x) => String(x.name || "").trim().toLowerCase() === nm);
+  return { cat: String(p?.cat || "").trim(), subCat: String(p?.subCat || "").trim() };
+}
+
+function stockFillCatOptions() {
+  const catEl = byId("stockCat");
+  const subEl = byId("stockSubcat");
+  if (!catEl || !subEl) return;
+  const cats = new Map(); // cat -> Set(subs)
+  for (const pr of db.prod || []) {
+    const c = String(pr.cat || "").trim();
+    const s = String(pr.subCat || "").trim();
+    if (!c) continue;
+    if (!cats.has(c)) cats.set(c, new Set());
+    if (s) cats.get(c).add(s);
+  }
+  const catList = Array.from(cats.keys()).sort((a, b) => a.localeCompare(b));
+  const curCat = String(catEl.value || "");
+  catEl.innerHTML =
+    `<option value="">Kateqoriya (hamısı)</option>` +
+    catList.map((c) => `<option value="${escapeAttr(c)}" ${c === curCat ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+  if (!catEl.value) {
+    subEl.innerHTML = `<option value="">Alt kateqoriya (hamısı)</option>`;
+  } else {
+    const subs = Array.from(cats.get(catEl.value) || []).sort((a, b) => a.localeCompare(b));
+    const curSub = String(subEl.value || "");
+    subEl.innerHTML =
+      `<option value="">Alt kateqoriya (hamısı)</option>` +
+      subs.map((s) => `<option value="${escapeAttr(s)}" ${s === curSub ? "selected" : ""}>${escapeHtml(s)}</option>`).join("");
+  }
+}
+
+function onStockCatChange() {
+  const subEl = byId("stockSubcat");
+  if (subEl) subEl.value = "";
+  stockFillCatOptions();
+  renderAll();
+}
+
 function loadMeta() {
   try {
     const raw = localStorage.getItem(META_KEY);
@@ -6222,11 +6264,33 @@ function renderAll() {
     .join("");
 
   // stock (do NOT depend on purch date/status filters; show all inventory)
+  stockFillCatOptions();
   const stockListAll = (db.purch || [])
     .slice(0, 5000) /* safety */
     .map((p) => ({ p }));
 
   byId("tblStock").innerHTML = stockListAll
+    .filter(({ p }) => inDateRange(p.date, "stockFrom", "stockTo"))
+    .filter(({ p }) => {
+      const st = byId("stockStatus")?.value || "all";
+      const remQty = purchRemainingQty(p);
+      const isReturned = !!p.returnedAt;
+      const isSold = !isReturned && remQty <= 0;
+      if (st === "all") return true;
+      if (st === "returned") return isReturned;
+      if (st === "sold") return isSold;
+      if (st === "stock") return !isReturned && !isSold;
+      return true;
+    })
+    .filter(({ p }) => {
+      const cat = String(byId("stockCat")?.value || "").trim();
+      const sub = String(byId("stockSubcat")?.value || "").trim();
+      if (!cat && !sub) return true;
+      const meta = productMetaByName(p.name);
+      if (cat && meta.cat !== cat) return false;
+      if (sub && meta.subCat !== sub) return false;
+      return true;
+    })
     .slice(0, 2000) /* safety */
     .map(({ p }, i) => {
       const key = itemKeyFromPurch(p);
@@ -7259,6 +7323,7 @@ Object.assign(window, {
   openCashDiffAnalysis,
   openOverdueInfo,
   saveOverdueNote,
+  onStockCatChange,
   toggleCashKind,
   toggleIncomeSourceBox,
   refreshSubcats,
