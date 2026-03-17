@@ -4,6 +4,7 @@
   --accent:#0D9488;
   --accent-hover:#0b7a6f;
   --accent-light:#ccfbf1;
+  --sidebar-solid:#0D9488;
   --text-main:#111827;
   --text-muted:#6b7280;
   --border-color:#e5e7eb;
@@ -23,6 +24,7 @@
 body.theme-dark{
   --bg-main:#1f2937;
   --sidebar-bg:#111827;
+  --sidebar-solid:#111827;
   --text-main:#f9fafb;
   --text-muted:#9ca3af;
   --border-color:#374151;
@@ -90,7 +92,7 @@ body.login-open{overflow:hidden;}
 body.login-open #appShell{display:none;}
 
 aside{
-  width:260px;background:#0D9488;border-right:1px solid rgba(0,0,0,.08);
+  width:260px;background:var(--sidebar-solid);border-right:1px solid rgba(0,0,0,.08);
   position:fixed;padding:0;
   top:56px;left:0;bottom:0;
   display:flex;flex-direction:column;overflow:hidden;
@@ -460,7 +462,7 @@ select{
   position:fixed;
   top:0;left:0;
   width:100vw;height:100vh;
-  background:#0D9488;
+  background:var(--sidebar-solid);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -468,9 +470,7 @@ select{
   z-index:9999;
   overflow:hidden;
 }
-body.theme-dark .login-overlay{
-  background:#111827;
-}
+body.theme-dark .login-overlay{background:var(--sidebar-solid);}
 .login-overlay .login-bg-blob{
   position:absolute;
   width:1px;

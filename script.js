@@ -987,6 +987,42 @@ function genId(list, minStart = 1) {
 }
 
 const THEME_KEY = "bakfon_theme";
+const SKIN_KEY = "bakfon_skin";
+
+const SKINS = [
+  { id: "teal", name: "Teal (default)", accent: "#0D9488", accentHover: "#0b7a6f", accentLight: "#ccfbf1", sidebarLight: "#0D9488", sidebarDark: "#111827" },
+  { id: "blue", name: "Ocean Blue", accent: "#2563eb", accentHover: "#1d4ed8", accentLight: "#dbeafe", sidebarLight: "#1e40af", sidebarDark: "#0b1220" },
+  { id: "violet", name: "Violet", accent: "#7c3aed", accentHover: "#6d28d9", accentLight: "#ede9fe", sidebarLight: "#5b21b6", sidebarDark: "#14102a" },
+  { id: "slate", name: "Slate", accent: "#0f172a", accentHover: "#111827", accentLight: "#e2e8f0", sidebarLight: "#0f172a", sidebarDark: "#0b1220" },
+  { id: "rose", name: "Rose", accent: "#e11d48", accentHover: "#be123c", accentLight: "#ffe4e6", sidebarLight: "#9f1239", sidebarDark: "#2b0b16" },
+];
+
+function getSkinId() {
+  try {
+    return String(localStorage.getItem(SKIN_KEY) || "teal").trim() || "teal";
+  } catch {
+    return "teal";
+  }
+}
+
+function applySkin() {
+  const id = getSkinId();
+  const skin = SKINS.find((s) => s.id === id) || SKINS[0];
+  const root = document.documentElement;
+  const isDark = getTheme() === "dark";
+  root.style.setProperty("--accent", skin.accent);
+  root.style.setProperty("--accent-hover", skin.accentHover);
+  root.style.setProperty("--accent-light", skin.accentLight);
+  root.style.setProperty("--sidebar-solid", isDark ? skin.sidebarDark : skin.sidebarLight);
+}
+
+function setSkin(id) {
+  const sid = SKINS.some((s) => s.id === id) ? id : "teal";
+  try {
+    localStorage.setItem(SKIN_KEY, sid);
+  } catch {}
+  applySkin();
+}
 function getTheme() {
   try {
     const t = (localStorage.getItem(THEME_KEY) || "light").toLowerCase();
@@ -1005,6 +1041,7 @@ function setTheme(mode) {
 function applyTheme() {
   const isDark = getTheme() === "dark";
   document.body.classList.toggle("theme-dark", isDark);
+  applySkin();
 }
 
 function getCurrentCompanyName() {
@@ -4336,6 +4373,39 @@ function openReturnSale(idx) {
   `);
 }
 
+function openSkins() {
+  if (!isDeveloper()) return alert("İcazə yoxdur.");
+  const cur = getSkinId();
+  const cards = SKINS
+    .map((s) => {
+      const on = s.id === cur;
+      return `
+        <button type="button" class="card" style="text-align:left;padding:14px;border:${on ? "2px solid var(--accent)" : "1px solid var(--border-color)"};background:var(--bg-main);" onclick="setSkin('${escapeAttr(s.id)}');closeMdl();">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <div>
+              <div style="font-weight:700;">${escapeHtml(s.name)}</div>
+              <div class="muted" style="font-size:.9rem;">Accent: ${escapeHtml(s.accent)}</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span style="width:18px;height:18px;border-radius:6px;background:${escapeAttr(s.accent)};border:1px solid rgba(0,0,0,.15);display:inline-block;"></span>
+              <span style="width:18px;height:18px;border-radius:6px;background:${escapeAttr(s.sidebarLight)};border:1px solid rgba(0,0,0,.15);display:inline-block;"></span>
+            </div>
+          </div>
+        </button>`;
+    })
+    .join("");
+  openModal(`
+    <h2>Skinlər / Rəng palitraları</h2>
+    <p class="muted" style="margin:0 0 12px 0;">İstədiyiniz palitranı seçin. Seçim cihazda yadda qalır.</p>
+    <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:12px;">
+      ${cards}
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" type="button" onclick="closeMdl()">Bağla</button>
+    </div>
+  `);
+}
+
 function saveReturnSale(e, idx) {
   e.preventDefault();
   if (!userCanRefund()) return alert("Qaytarma icazəsi yoxdur.");
@@ -6398,6 +6468,8 @@ Object.assign(window, {
   openProfile,
   openSettings,
   saveSettings,
+  openSkins,
+  setSkin,
   openAuditDetails,
   openGlobalSearch,
   runGlobalSearch,
