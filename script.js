@@ -1618,7 +1618,7 @@ function openPurch(idx = null) {
   const p =
     idx !== null
       ? db.purch[idx]
-      : { date: nowISODateTimeLocal(), supp: "", name: "", code: "", qty: 1, imei1: "", imei2: "", seria: "", amount: "", paidTotal: "0", payType: "nagd", employeeId: "", paymentAccountId: 1 };
+      : { date: nowISODateTimeLocal(), supp: "", name: "", code: "", qty: 1, imei1: "", imei2: "", seria: "", amount: "", unitPrice: "", paidTotal: "0", payType: "nagd", employeeId: "", paymentAccountId: 1 };
 
   const suppOptions = db.supp.map((s) => `<option value="${escapeAttr(s.co)}" ${p.supp === s.co ? "selected" : ""}>${escapeHtml(s.co)}</option>`).join("");
   const prodOptions = db.prod.map((x) => `<option value="${escapeAttr(x.name)}" ${p.name === x.name ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("");
@@ -1635,6 +1635,8 @@ function openPurch(idx = null) {
       .map((x) => `<option value="${escapeAttr(x)}">${escapeHtml(x)}</option>`)
       .join("");
 
+  const isBulk = purchIsBulk(p);
+  const prefUnit = isBulk ? (p.unitPrice != null && p.unitPrice !== "" ? n(p.unitPrice) : n(p.amount) / Math.max(1, Math.floor(n(p.qty || 1)))) : n(p.amount);
   openModal(`
     <h2>${idx !== null ? "Alış Redaktə" : "Yeni Alış"}</h2>
     <form onsubmit="savePurch(event, ${idx})">
@@ -1677,7 +1679,7 @@ function openPurch(idx = null) {
           <input id="f_p_ser" value="${escapeHtml(p.seria || "")}" placeholder="Seriya №">
         </div>
 
-        <input type="number" step="0.01" id="f_p_amount" value="${escapeAttr(p.amount)}" placeholder="Məbləğ (AZN)" class="span-2" required>
+        <input type="number" step="0.01" id="f_p_amount" value="${escapeAttr(isBulk ? String(prefUnit) : String(p.amount))}" placeholder="${isBulk ? "1 ədəd qiymət (AZN)" : "Məbləğ (AZN)"}" class="span-2" required>
         <select id="f_p_payType">
           <option value="nagd" ${p.payType === "nagd" ? "selected" : ""}>nagd</option>
           <option value="kocurme" ${p.payType === "kocurme" ? "selected" : ""}>kocurme</option>
@@ -1685,6 +1687,7 @@ function openPurch(idx = null) {
         </select>
         <input type="number" step="0.01" id="f_p_paid" value="${escapeAttr(p.paidTotal || "0")}" placeholder="Ödənilən (AZN)">
         <select id="f_p_pay_acc" class="span-3">${payAccOptions}</select>
+        <div id="pTotalHint" class="span-3 muted small" style="display:${isBulk ? "" : "none"}">Cəmi: —</div>
       </div>
       <div class="modal-footer">
         <button class="btn-main" type="submit">${idx !== null ? "Yenilə" : "Mədaxil et"}</button>
@@ -1693,6 +1696,23 @@ function openPurch(idx = null) {
     </form>
   `);
   togglePurchBulk();
+  const upd = () => {
+    const bulk = !!byId("f_p_bulk")?.checked;
+    const hint = byId("pTotalHint");
+    if (!hint) return;
+    if (!bulk) {
+      hint.style.display = "none";
+      return;
+    }
+    hint.style.display = "";
+    const qty = Math.max(1, Math.floor(n(val("f_p_qty") || 1)));
+    const unit = Math.max(0, n(val("f_p_amount") || 0));
+    hint.textContent = `Cəmi: ${money(unit * qty)} AZN`;
+  };
+  byId("f_p_qty") && (byId("f_p_qty").oninput = upd);
+  byId("f_p_amount") && (byId("f_p_amount").oninput = upd);
+  byId("f_p_bulk") && (byId("f_p_bulk").onchange = () => { togglePurchBulk(); upd(); });
+  upd();
 }
 
 function savePurch(e, idx) {
@@ -1743,6 +1763,8 @@ function savePurch(e, idx) {
   }
   const employeeId = (val("f_p_staff") || "").trim() || undefined;
   const invNoVal = (val("f_p_inv") || "").trim();
+  const unitPrice = isBulk ? Math.max(0, n(val("f_p_amount"))) : null;
+  const totalAmount = isBulk ? unitPrice * qty : Math.max(0, n(val("f_p_amount")));
   const data = {
     uid: idx !== null ? db.purch[idx].uid : genId(db.purch, 1),
     invNo: idx !== null ? (db.purch[idx].invNo || invFallback("purch", db.purch[idx].uid)) : (invNoVal || nextInvNo("purch")),
@@ -1754,7 +1776,8 @@ function savePurch(e, idx) {
     imei1: isBulk ? "" : val("f_p_i1").trim(),
     imei2: isBulk ? "" : val("f_p_i2").trim(),
     seria: isBulk ? "" : val("f_p_ser").trim(),
-    amount: String(Math.max(0, n(val("f_p_amount")))),
+    amount: String(Math.max(0, totalAmount)),
+    unitPrice: isBulk ? String(unitPrice) : (idx !== null ? (db.purch[idx]?.unitPrice ?? "") : ""),
     payType: val("f_p_payType"),
     paidTotal: String(Math.max(0, n(val("f_p_paid")))),
     employeeId,
@@ -2230,6 +2253,7 @@ function openSale(idx = null) {
         </div>
 
         <input type="number" step="0.01" id="f_s_amount" class="span-2" placeholder="Ümumi məbləğ (AZN)" required oninput="recalcCredit()">
+        <div id="sTotalHint" class="span-3 muted small" style="display:none">Cəmi: —</div>
         <div class="span-3 paybox">
           <label class="chk">
             <input type="checkbox" id="f_pay_now" onchange="togglePayNow()">
@@ -2264,7 +2288,14 @@ function openSale(idx = null) {
     byId("f_s_type").value = current.saleType || "nagd";
     byId("f_s_customer").value = String(current.customerId || "");
     byId("f_s_staff").value = String(current.employeeId || "");
-    byId("f_s_amount").value = String(current.amount || "");
+    // if bulk, show unit price in input; else show total
+    if (current.bulkPurchUid) {
+      const q = Math.max(1, Math.floor(n(current.qty || 1)));
+      const unit = current.unitPrice != null && current.unitPrice !== "" ? n(current.unitPrice) : (n(current.amount) / q);
+      byId("f_s_amount").value = String(unit);
+    } else {
+      byId("f_s_amount").value = String(current.amount || "");
+    }
 
     if (current.bulkPurchUid) {
       byId("f_s_item").value = `bulk:${current.bulkPurchUid}`;
@@ -2294,6 +2325,26 @@ function openSale(idx = null) {
     togglePayNow(true);
   }
   toggleSaleQty();
+  const upd = () => {
+    const sel = byId("f_s_item")?.value || "";
+    const isBulk = String(sel).startsWith("bulk:");
+    const hint = byId("sTotalHint");
+    if (!hint) return;
+    if (!isBulk) {
+      hint.style.display = "none";
+      return;
+    }
+    hint.style.display = "";
+    const qty = Math.max(1, Math.floor(n(val("f_s_qty") || 1)));
+    const unit = Math.max(0, n(val("f_s_amount") || 0));
+    hint.textContent = `Cəmi: ${money(unit * qty)} AZN`;
+  };
+  const qtyEl = byId("f_s_qty");
+  const amtEl = byId("f_s_amount");
+  qtyEl && (qtyEl.oninput = () => { upd(); recalcCredit(); });
+  amtEl && (amtEl.oninput = () => { upd(); recalcCredit(); });
+  byId("f_s_item") && (byId("f_s_item").onchange = () => { toggleSaleQty(); upd(); recalcCredit(); });
+  upd();
 }
 
 function togglePayNow(noRender) {
@@ -2376,7 +2427,8 @@ function saveSale(e, idx) {
   }
 
   const saleType = val("f_s_type");
-  const amount = Math.max(0, n(val("f_s_amount")));
+  const unitOrTotal = Math.max(0, n(val("f_s_amount")));
+  const amount = kind === "bulk" ? (unitOrTotal * qty) : unitOrTotal;
   const payNow = !!byId("f_pay_now")?.checked;
   const payAccountId = payNow ? Number(val("f_pay_acc") || 1) : null;
   let paid = payNow ? Math.max(0, n(val("f_s_paid"))) : 0;
@@ -2395,7 +2447,9 @@ function saveSale(e, idx) {
         .filter((s) => String(s.saleType) === "kredit")
         .filter((s) => !s.returnedAt)
         .reduce((a, s) => a + saleRemaining(s), 0);
-      const newDebt = Math.max(0, n(val("f_s_amount")) - Math.max(0, n(val("f_cr_down"))));
+      const qtyNow = kind === "bulk" ? Math.max(1, Math.floor(n(val("f_s_qty")))) : 1;
+      const formTotal = kind === "bulk" ? (Math.max(0, n(val("f_s_amount"))) * qtyNow) : Math.max(0, n(val("f_s_amount")));
+      const newDebt = Math.max(0, formTotal - Math.max(0, n(val("f_cr_down"))));
       const oldDebt = isEdit ? saleRemaining(db.sales[idx]) : 0;
       const will = existing - oldDebt + newDebt;
       if (will - lim > 0.000001) {
@@ -2421,6 +2475,7 @@ function saveSale(e, idx) {
     imei2: purch.imei2 || "",
     seria: purch.seria || "",
     amount: String(amount),
+    unitPrice: kind === "bulk" ? String(unitOrTotal) : (isEdit ? db.sales[idx]?.unitPrice ?? "" : ""),
     itemKey: key,
     payments: isEdit ? (db.sales[idx].payments || []) : [],
     paidTotal: "0",
