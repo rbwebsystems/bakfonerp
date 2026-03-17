@@ -1155,6 +1155,7 @@ function canDeletePurchase(p) {
 }
 
 function purchRemaining(p) {
+  if (p && p.returnedAt) return 0;
   return Math.max(0, n(p.amount) - n(p.paidTotal));
 }
 
@@ -1681,19 +1682,43 @@ function savePurch(e, idx) {
   const isBulk = !!byId("f_p_bulk")?.checked;
   const qty = isBulk ? Math.max(1, Math.floor(n(val("f_p_qty")))) : 1;
   const code = isBulk ? val("f_p_code").trim() : "";
+  const statusOfPurch = (p0) => {
+    if (!p0) return "-";
+    if (p0.returnedAt) return "QAYTARILIB";
+    const remQty = purchRemainingQty(p0);
+    if (remQty <= 0.000001) return "SATILIB";
+    return "ANBARDA";
+  };
+  const warnExisting = (found, keyLabel, keyValue) => {
+    if (!found) return true;
+    const inv = found.invNo || invFallback("purch", found.uid);
+    const st = statusOfPurch(found);
+    const msg =
+      `Diqqət: ${keyLabel} artıq sistemdə olub.\n` +
+      `${keyLabel}: ${keyValue}\n` +
+      `Status: ${st}\n` +
+      `Alış: ${inv} • ${found.supp || "-"} • ${String(found.date || "").slice(0, 16)}\n\n` +
+      `Yenə də bu alışı əlavə edək?`;
+    return confirm(msg);
+  };
+
   if (!isBulk) {
     const imei1 = val("f_p_i1").trim();
     const imei2 = val("f_p_i2").trim();
     const seria = val("f_p_ser").trim();
-    const dup = db.purch.some((p, pi) => {
-      if (idx !== null && pi === idx) return false;
-      return (
-        (imei1 && String(p.imei1 || "").trim() === imei1) ||
-        (imei2 && String(p.imei2 || "").trim() === imei2) ||
-        (seria && String(p.seria || "").trim() === seria)
-      );
-    });
-    if (dup) return alert("Bu IMEI/Seriya artıq mövcuddur.");
+    const findMatch = (pred) => (db.purch || []).find((p, pi) => !(idx !== null && pi === idx) && pred(p));
+    const m1 = imei1 ? findMatch((p) => String(p.imei1 || "").trim() === imei1) : null;
+    if (m1 && !warnExisting(m1, "IMEI 1", imei1)) return;
+    const m2 = !m1 && imei2 ? findMatch((p) => String(p.imei2 || "").trim() === imei2) : null;
+    if (m2 && !warnExisting(m2, "IMEI 2", imei2)) return;
+    const m3 = !m1 && !m2 && seria ? findMatch((p) => String(p.seria || "").trim() === seria) : null;
+    if (m3 && !warnExisting(m3, "Seriya", seria)) return;
+  } else {
+    const codeNorm = String(code || "").trim();
+    if (codeNorm) {
+      const m = (db.purch || []).find((p, pi) => !(idx !== null && pi === idx) && String(p.code || "").trim() === codeNorm);
+      if (m && !warnExisting(m, "Kod", codeNorm)) return;
+    }
   }
   const employeeId = (val("f_p_staff") || "").trim() || undefined;
   const data = {
@@ -5199,16 +5224,17 @@ function renderAll() {
   // creditor (suppliers) + date filter + pagination
   const credStatus = byId("credStatus")?.value || "open";
   const groupsMap = new Map();
-  for (const p of db.purch.filter((p) => inDateRange(p.date, "credFrom", "credTo"))) {
+  for (const p of db.purch.filter((p) => !p.returnedAt).filter((p) => inDateRange(p.date, "credFrom", "credTo"))) {
     const supp = p.supp || "(Seçilməyib)";
     if (!groupsMap.has(supp)) groupsMap.set(supp, []);
     groupsMap.get(supp).push(p);
   }
 
   const credGroups = Array.from(groupsMap.entries()).map(([supp, purchases]) => {
-    const total = purchases.reduce((a, x) => a + n(x.amount), 0);
-    const paid = purchases.reduce((a, x) => a + n(x.paidTotal), 0);
-    const rem = purchases.reduce((a, x) => a + purchRemaining(x), 0);
+    const actives = purchases.filter((x) => !x.returnedAt);
+    const total = actives.reduce((a, x) => a + n(x.amount), 0);
+    const paid = actives.reduce((a, x) => a + n(x.paidTotal), 0);
+    const rem = actives.reduce((a, x) => a + purchRemaining(x), 0);
     const st = debtStatus(total, rem);
     return { supp, purchases, total, paid, rem, st };
   });
