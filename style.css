@@ -502,6 +502,22 @@ main{flex:1;padding:40px;}
   color:#fff;
   background:var(--accent);
 }
+.overdue-info-btn{
+  border:0 !important;
+  background:transparent !important;
+  box-shadow:none !important;
+  width:auto;
+  min-width:24px;
+  height:24px;
+  padding:0 4px;
+}
+.info-i-plain{
+  font-style:italic;
+  font-weight:700;
+  font-size:1rem;
+  color:var(--accent);
+  line-height:1;
+}
 
 /* IMPORTANT: keep compact sizing only in header filters.
    Modal/forms use the normal input/select/textarea rule further below. */
