@@ -465,6 +465,26 @@ main{flex:1;padding:40px;}
   background:rgba(127,29,29,.92);
   border-color:rgba(127,29,29,.98);
 }
+.late-cell-1-30{
+  background:rgba(16,185,129,.14);
+  color:#065f46;
+  font-weight:700;
+}
+.late-cell-31-60{
+  background:rgba(249,115,22,.18);
+  color:#9a3412;
+  font-weight:700;
+}
+.late-cell-61-90{
+  background:rgba(239,68,68,.18);
+  color:#b91c1c;
+  font-weight:700;
+}
+.late-cell-91p{
+  background:rgba(127,29,29,.92);
+  color:#fff;
+  font-weight:800;
+}
 .btn-mini-info{
   display:inline-flex;
   align-items:center;

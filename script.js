@@ -6893,6 +6893,9 @@ function renderAll() {
   const overdueBody = byId("tblOverdue");
   if (overdueBody) {
     const view = byId("overdueView")?.value || "overdue";
+    const daysFrom = Math.max(0, Math.floor(n(byId("overdueDaysFrom")?.value || 0)));
+    const daysToRaw = byId("overdueDaysTo")?.value;
+    const daysTo = daysToRaw === "" ? null : Math.max(0, Math.floor(n(daysToRaw)));
     const today = new Date();
     const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const dayMs = 24 * 60 * 60 * 1000;
@@ -6923,6 +6926,8 @@ function renderAll() {
           if (view === "overdue" && !isOverdue) continue;
           if (view === "today" && !isToday) continue;
           if (view === "all" && daysLate < 0) continue;
+          if (Math.max(0, daysLate) < daysFrom) continue;
+          if (daysTo != null && Math.max(0, daysLate) > daysTo) continue;
           rows.push({
             saleUid: s.uid,
             customer: custFull || s.customerName || "-",
@@ -6940,11 +6945,11 @@ function renderAll() {
     overdueBody.innerHTML =
       rows
         .map((x, i) => {
-          const lateClass =
-            x.daysLate >= 91 ? "late-91p" :
-            x.daysLate >= 61 ? "late-61-90" :
-            x.daysLate >= 31 ? "late-31-60" :
-            x.daysLate >= 1 ? "late-1-30" : "";
+          const lateCellClass =
+            x.daysLate >= 91 ? "late-cell-91p" :
+            x.daysLate >= 61 ? "late-cell-61-90" :
+            x.daysLate >= 31 ? "late-cell-31-60" :
+            x.daysLate >= 1 ? "late-cell-1-30" : "";
           return `
           <tr>
             <td>${i + 1}</td>
@@ -6952,7 +6957,7 @@ function renderAll() {
             <td>${escapeHtml(x.inv || "-")}</td>
             <td>${money(x.dueAmount)} AZN</td>
             <td>${escapeHtml(x.dueDate || "-")}</td>
-            <td><span class="late-days ${lateClass}">${x.daysLate}</span></td>
+            <td class="${lateCellClass}">${x.daysLate}</td>
             <td>${escapeHtml(x.zam || "-")}</td>
             <td class="tbl-actions">
               <button class="btn-mini btn-mini-info" type="button" onclick="openOverdueInfo('${escapeAttr(x.saleUid)}')"><span class="info-i">i</span> Info</button>

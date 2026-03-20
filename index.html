@@ -394,6 +394,8 @@
             <option value="today">Bu gün ödəniş günü</option>
             <option value="all">Hamısı</option>
           </select>
+          <input type="number" id="overdueDaysFrom" class="select-small" placeholder="Min gün" min="0" onchange="renderAll()">
+          <input type="number" id="overdueDaysTo" class="select-small" placeholder="Max gün" min="0" onchange="renderAll()">
           <div class="search-container">
             <input type="text" id="srcOverdue" placeholder="Axtar (müştəri / qaimə)..." onkeyup="filterTable('tblOverdue', this.value)">
             <button class="search-btn" type="button"><i class="fas fa-search"></i></button>
