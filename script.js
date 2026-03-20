@@ -1927,6 +1927,42 @@ function buildCreditSchedule(sale) {
   return { term, down, remAfterDown, monthly, rows };
 }
 
+function runCreditRoundingMigration() {
+  ensureAuditTrash();
+  if (!db.settings) db.settings = defaultDB().settings;
+  // one-time migration marker per company DB
+  if (db.settings.__creditRoundV2) return;
+
+  let changed = false;
+  for (const s of db.sales || []) {
+    if (String(s.saleType || "").toLowerCase() !== "kredit") continue;
+    const amount = Math.max(0, n(s.amount));
+    if (!s.credit) s.credit = {};
+    const term = Math.max(1, Math.floor(n(s.credit.termMonths || 0)));
+    const down = Math.min(amount, Math.max(0, n(s.credit.downPayment || 0)));
+    const paidFromPayments = sumPayments(s.payments || []);
+    const paid = Math.min(amount, Math.max(0, paidFromPayments || n(s.paidTotal)));
+    const monthly = term > 0 ? (Math.max(0, amount - down) / term) : 0;
+
+    if (n(s.paidTotal) !== paid) {
+      s.paidTotal = String(paid);
+      changed = true;
+    }
+    if (n(s.credit.downPayment) !== down || Number(s.credit.termMonths) !== term || n(s.credit.monthlyPayment) !== monthly) {
+      s.credit.termMonths = term;
+      s.credit.downPayment = down;
+      s.credit.monthlyPayment = monthly;
+      changed = true;
+    }
+  }
+
+  db.settings.__creditRoundV2 = true;
+  if (changed) {
+    logEvent("update", "tools", { kind: "credit_round_migration_v2" });
+    saveCompanyDB();
+  }
+}
+
 // ========= Customers =========
 function openCust(idx = null) {
   if (idx !== null && !userCanEdit()) return alert("Redaktə icazəsi yoxdur.");
@@ -7980,6 +8016,7 @@ function initApp() {
     }
   }
   ensureOverdueTestPack();
+  runCreditRoundingMigration();
   if (secToShow && navToUse) showSec(secToShow, navToUse);
   renderAll();
 }
