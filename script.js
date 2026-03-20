@@ -1930,9 +1930,6 @@ function buildCreditSchedule(sale) {
 function runCreditRoundingMigration() {
   ensureAuditTrash();
   if (!db.settings) db.settings = defaultDB().settings;
-  // one-time migration marker per company DB
-  if (db.settings.__creditRoundV2) return;
-
   let changed = false;
   for (const s of db.sales || []) {
     if (String(s.saleType || "").toLowerCase() !== "kredit") continue;
@@ -1955,10 +1952,29 @@ function runCreditRoundingMigration() {
       changed = true;
     }
   }
+  return changed;
+}
 
-  db.settings.__creditRoundV2 = true;
-  if (changed) {
-    logEvent("update", "tools", { kind: "credit_round_migration_v2" });
+function runMigrations() {
+  ensureAuditTrash();
+  if (!db.settings) db.settings = defaultDB().settings;
+  const TARGET_SCHEMA_VERSION = 1;
+  let ver = Math.max(0, Math.floor(n(db.settings.__schemaVersion || 0)));
+  let changed = false;
+
+  // v1: normalize all existing credit sales for cent-accurate schedule behavior
+  if (ver < 1) {
+    const did = runCreditRoundingMigration();
+    if (did) {
+      logEvent("update", "tools", { kind: "credit_round_migration_v2" });
+      changed = true;
+    }
+    db.settings.__creditRoundV2 = true; // backward compatibility marker
+    ver = 1;
+  }
+
+  db.settings.__schemaVersion = TARGET_SCHEMA_VERSION;
+  if (changed || n(db.settings.__schemaVersion || 0) !== TARGET_SCHEMA_VERSION) {
     saveCompanyDB();
   }
 }
@@ -8015,8 +8031,8 @@ function initApp() {
       navToUse = firstVisible;
     }
   }
+  runMigrations();
   ensureOverdueTestPack();
-  runCreditRoundingMigration();
   if (secToShow && navToUse) showSec(secToShow, navToUse);
   renderAll();
 }
