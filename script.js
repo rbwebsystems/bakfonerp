@@ -351,7 +351,7 @@ function renderAccountsManagerTable() {
         <td>${money(bal)} AZN</td>
         <td class="tbl-actions">
           ${userCanEdit() ? `<button class="icon-btn edit" onclick="closeMdl();openAccount(${i})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-          ${userCanDelete() ? `<button class="icon-btn delete" onclick="closeMdl();delAccount(${i})" title="Sil" ${delDisabled}><i class="fas fa-trash"></i></button>` : ""}
+          ${userCanDelete("accounts") ? `<button class="icon-btn delete" onclick="closeMdl();delAccount(${i})" title="Sil" ${delDisabled}><i class="fas fa-trash"></i></button>` : ""}
         </td>
       </tr>`;
     })
@@ -401,7 +401,7 @@ function saveAccount(e, idx) {
 }
 
 function delAccount(idx) {
-  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  if (!userCanDelete("accounts")) return alert("Sil icazəsi yoxdur.");
   ensureAccounts();
   const a = db.accounts[idx];
   if (!a) return;
@@ -4377,7 +4377,7 @@ async function saveEditCashOp(e, uid) {
 }
 
 function delCashOp(uid) {
-  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  if (!userCanDelete("cash")) return alert("Sil icazəsi yoxdur.");
   const i = db.cash.findIndex((c) => Number(c.uid) === Number(uid));
   if (i < 0) return;
   const c = db.cash[i];
@@ -6783,7 +6783,7 @@ function restoreTrash(uid) {
 }
 
 function deleteTrash(uid) {
-  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  if (!userCanDelete("trash")) return alert("Sil icazəsi yoxdur.");
   const i = db.trash.findIndex((t) => Number(t.uid) === Number(uid));
   if (i < 0) return;
   appConfirm("Səbətdən tam silinsin?").then((ok) => {
@@ -6852,7 +6852,7 @@ function renderAll() {
     .map(({ c, idx }, i) => {
       const guarantor = c.zam ? db.cust.find((x) => String(x.uid) === String(c.zam)) : null;
       const canE = userCanEdit();
-      const canD = userCanDelete();
+      const canD = userCanDelete("cust");
       return `
       <tr>
         <td>${i + 1}</td>
@@ -6890,7 +6890,7 @@ function renderAll() {
       <td class="tbl-actions">
         <button class="icon-btn info" onclick="openSuppInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>
         ${userCanEdit() ? `<button class="icon-btn edit" onclick="openSupp(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('supp', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        ${userCanDelete("supp") ? `<button class="icon-btn delete" onclick="delItem('supp', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
       </td>
     </tr>`
     )
@@ -6912,7 +6912,7 @@ function renderAll() {
       <td>${escapeHtml(p.subCat || "-")}</td>
       <td class="tbl-actions">
         ${userCanEdit() ? `<button class="icon-btn edit" onclick="openProd(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('prod', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        ${userCanDelete("prod") ? `<button class="icon-btn delete" onclick="delItem('prod', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
       </td>
     </tr>`
     )
@@ -6935,7 +6935,7 @@ function renderAll() {
       const actions = `
         <button class="icon-btn info" onclick="openPurchInfo(${idx})" title="Məlumat"><i class="fas fa-circle-info"></i></button>
         ${userCanEdit() ? `<button class="icon-btn edit" onclick="openPurch(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('purch', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        ${userCanDelete("purch") ? `<button class="icon-btn delete" onclick="delItem('purch', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
       `;
       const invNo = p.invNo || invFallback("purch", p.uid);
       const searchText = [
@@ -7088,7 +7088,7 @@ function renderAll() {
         <td class="tbl-actions">
           <button class="icon-btn info" onclick="openSaleInfo(${idx})" title="Info"><i class="fas fa-circle-info"></i></button>
           ${userCanEdit() ? `<button class="icon-btn edit" onclick="openSale(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-          ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('sales', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+          ${userCanDelete("sales") ? `<button class="icon-btn delete" onclick="delItem('sales', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
           <span style="display:none">${escapeHtml(searchText)}</span>
         </td>
       </tr>`;
@@ -7114,7 +7114,7 @@ function renderAll() {
       <td>${money(s.commPct || 0)}%</td>
       <td class="tbl-actions">
         ${userCanEdit() ? `<button class="icon-btn edit" onclick="openStaff(${idx})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delItem('staff', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        ${userCanDelete("staff") ? `<button class="icon-btn delete" onclick="delItem('staff', ${idx})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
       </td>
     </tr>`
     )
@@ -7466,7 +7466,7 @@ function renderAll() {
       <td>${escapeHtml(payType)}</td>
       <td class="tbl-actions">
         ${userCanEdit() ? `<button class="icon-btn edit" onclick="openEditCashOp(${c.uid})" title="Redaktə"><i class="fas fa-pen"></i></button>` : ""}
-        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delCashOp(${c.uid})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+        ${userCanDelete("cash") ? `<button class="icon-btn delete" onclick="delCashOp(${c.uid})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
       </td>
     </tr>`;
     })
@@ -7497,7 +7497,7 @@ function renderAll() {
         <td>${money(bal)} AZN</td>
         <td class="tbl-actions">
           ${userCanEdit() ? `<button class="icon-btn edit" onclick="openAccount(${i})" title="Edit"><i class="fas fa-pen"></i></button>` : ""}
-          ${userCanDelete() ? `<button class="icon-btn delete" onclick="delAccount(${i})" title="Sil" ${delDisabled}><i class="fas fa-trash"></i></button>` : ""}
+          ${userCanDelete("accounts") ? `<button class="icon-btn delete" onclick="delAccount(${i})" title="Sil" ${delDisabled}><i class="fas fa-trash"></i></button>` : ""}
         </td>
       </tr>`;
     })
@@ -7605,7 +7605,7 @@ function renderAll() {
           <td>${escapeHtml(t.deletedBy || "-")}</td>
           <td class="tbl-actions">
             ${userCanEdit() ? `<button class="btn-mini-pay" type="button" onclick="restoreTrash(${t.uid})">Bərpa</button>` : ""}
-            ${userCanDelete() ? `<button class="icon-btn delete" onclick="deleteTrash(${t.uid})" title="Tam sil"><i class="fas fa-trash"></i></button>` : ""}
+            ${userCanDelete("trash") ? `<button class="icon-btn delete" onclick="deleteTrash(${t.uid})" title="Tam sil"><i class="fas fa-trash"></i></button>` : ""}
           </td>
         </tr>`;
       })
@@ -7991,7 +7991,14 @@ function renderAll() {
 }
 
 function delItem(type, i) {
-  if (!userCanDelete()) return alert("Sil icazəsi yoxdur.");
+  const sec = type === "cust" ? "cust"
+    : type === "supp" ? "supp"
+    : type === "prod" ? "prod"
+    : type === "purch" ? "purch"
+    : type === "sales" ? "sales"
+    : type === "staff" ? "staff"
+    : "*";
+  if (!userCanDelete(sec)) return alert("Sil icazəsi yoxdur.");
   appConfirm("Silinsin?").then((ok) => {
     if (!ok) return;
   ensureAuditTrash();
