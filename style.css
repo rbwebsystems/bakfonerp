@@ -1017,6 +1017,85 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none;
 .icon-btn.delete{background:#fee2e2;color:#b91c1c;}
 .icon-btn.delete:hover{background:#fecaca;box-shadow:0 3px 8px rgba(239,68,68,.35);transform:translateY(-1px);}
 
+/* Minimal top filters: compact + horizontal */
+.header-actions{
+  gap:8px;
+  flex-wrap:nowrap;
+  overflow-x:auto;
+  scrollbar-width:thin;
+}
+.header-actions > *{flex:0 0 auto;}
+.header-actions .btn-main,
+.header-actions .btn-cancel,
+.header-actions .btn-pager,
+.header-actions select,
+.header-actions input{height:30px;font-size:.82rem;}
+.header-actions select,
+.header-actions .select-small{
+  height:30px !important;
+  padding:0 9px !important;
+  border-radius:10px !important;
+  min-width:96px;
+  font-weight:700;
+}
+.header-actions .date-range{gap:4px;}
+.header-actions .date-range input{
+  height:30px !important;
+  width:104px;
+  padding:0 8px !important;
+  border-radius:10px !important;
+}
+
+/* Search icon -> expand to input */
+.header-actions .search-container.search-collapsible{
+  position:relative;
+  flex:0 0 auto;
+  width:32px;
+  min-width:32px;
+  overflow:visible;
+}
+.header-actions .search-container.search-collapsible .search-btn{
+  width:30px;
+  height:30px;
+  min-width:30px;
+  margin-left:0;
+  border-radius:10px;
+  position:relative;
+  z-index:2;
+}
+.header-actions .search-container.search-collapsible input{
+  position:absolute;
+  right:34px;
+  top:0;
+  width:0;
+  opacity:0;
+  padding:0;
+  border-width:0;
+  pointer-events:none;
+  transition:width .16s ease, opacity .12s ease;
+  white-space:nowrap;
+}
+.header-actions .search-container.search-collapsible.open{
+  width:250px;
+  min-width:250px;
+}
+.header-actions .search-container.search-collapsible.open input{
+  width:212px;
+  opacity:1;
+  height:30px;
+  padding:0 10px;
+  border:1px solid var(--border-color);
+  border-radius:10px;
+  pointer-events:auto;
+}
+
+@media (max-width: 980px){
+  .header-actions{
+    flex-wrap:wrap;
+    overflow-x:visible;
+  }
+}
+
 /* Info blocks */
 .info-block{
   border-radius:14px;border:1px solid var(--border-color);

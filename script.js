@@ -974,6 +974,37 @@ function operationActorName(rec, fallback = "-") {
   return fallback || "-";
 }
 
+function initHeaderCompactSearch() {
+  const boxes = Array.from(document.querySelectorAll(".header-actions .search-container"));
+  boxes.forEach((box) => {
+    if (!box || box.dataset.compactInit === "1") return;
+    const input = box.querySelector("input[type='text']");
+    const btn = box.querySelector(".search-btn");
+    if (!input || !btn) return;
+    box.dataset.compactInit = "1";
+    box.classList.add("search-collapsible");
+
+    const open = () => box.classList.add("open");
+    const closeIfEmpty = () => {
+      if (String(input.value || "").trim()) return;
+      box.classList.remove("open");
+    };
+
+    btn.addEventListener("click", () => {
+      if (!box.classList.contains("open")) {
+        open();
+        input.focus();
+        return;
+      }
+      if (document.activeElement !== input) input.focus();
+    });
+
+    input.addEventListener("focus", open);
+    input.addEventListener("blur", () => setTimeout(closeIfEmpty, 120));
+    if (String(input.value || "").trim()) open();
+  });
+}
+
 function isDeveloper() {
   const u = currentUser();
   return !!u && u.role === "developer";
@@ -8122,6 +8153,7 @@ Object.assign(window, {
 
 function initApp() {
   applyAccessUI();
+  initHeaderCompactSearch();
   if (!meta.session) {
     showLoginOverlay(true);
     return;
