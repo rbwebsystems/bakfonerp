@@ -7082,6 +7082,7 @@ function renderAll() {
             duePaidAmount: Math.max(0, n(r.paid)),
             dueDate: r.due,
             dueAmount: Math.max(0, n(r.remaining)),
+            invoiceRemaining: Math.max(0, saleRemaining(s)),
             daysLate: Math.max(0, daysLate),
             zam,
           });
@@ -7106,6 +7107,7 @@ function renderAll() {
             <td>${money(x.dueFullAmount)} AZN</td>
             <td>${money(x.duePaidAmount)} AZN</td>
             <td>${money(x.dueAmount)} AZN</td>
+            <td>${money(x.invoiceRemaining)} AZN</td>
             <td>${escapeHtml(x.dueDate || "-")}</td>
             <td class="${lateCellClass} overdue-days-cell">${x.daysLate}</td>
             <td>${escapeHtml(x.zam || "-")}</td>
@@ -7115,7 +7117,7 @@ function renderAll() {
           </tr>`;
         })
         .join("")
-      || `<tr><td colspan="10">Məlumat yoxdur</td></tr>`;
+      || `<tr><td colspan="11">Məlumat yoxdur</td></tr>`;
     if (rows.length) {
       const overdueFullTotal = rows.reduce((a, x) => a + n(x.dueFullAmount), 0);
       const overduePaidTotal = rows.reduce((a, x) => a + n(x.duePaidAmount), 0);
@@ -7125,6 +7127,7 @@ function renderAll() {
           <td><strong>${money(overdueFullTotal)} AZN</strong></td>
           <td><strong>${money(overduePaidTotal)} AZN</strong></td>
           <td><strong>${money(overdueTotal)} AZN</strong></td>
+          <td></td>
           <td colspan="4"></td>
         </tr>
       `;
