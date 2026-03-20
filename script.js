@@ -7121,13 +7121,14 @@ function renderAll() {
     if (rows.length) {
       const overdueFullTotal = rows.reduce((a, x) => a + n(x.dueFullAmount), 0);
       const overduePaidTotal = rows.reduce((a, x) => a + n(x.duePaidAmount), 0);
+      const overdueInvoiceRemTotal = rows.reduce((a, x) => a + n(x.invoiceRemaining), 0);
       overdueBody.innerHTML += `
         <tr class="total-row">
           <td colspan="3"><strong>Cəmi</strong></td>
           <td><strong>${money(overdueFullTotal)} AZN</strong></td>
           <td><strong>${money(overduePaidTotal)} AZN</strong></td>
           <td><strong>${money(overdueTotal)} AZN</strong></td>
-          <td></td>
+          <td><strong>${money(overdueInvoiceRemTotal)} AZN</strong></td>
           <td colspan="4"></td>
         </tr>
       `;
