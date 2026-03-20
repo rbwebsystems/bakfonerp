@@ -391,9 +391,9 @@ body.theme-dark .profile-dropdown-sep{background:#4b5563;}
 .nav-link.active i{opacity:1;}
 .nav-sep{height:1px;background:rgba(255,255,255,.22);margin:12px 8px;}
 
-main{flex:1;padding:40px;}
-.section{display:none;}
-.section.active{display:block;}
+main{flex:1;padding:28px 40px 18px;min-height:0;overflow:hidden;}
+.section{display:none;min-height:0;}
+.section.active{display:flex;flex-direction:column;min-height:0;}
 
 
 .content-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:12px;flex-wrap:wrap;}
@@ -550,8 +550,8 @@ main{flex:1;padding:40px;}
 }
 #overdue .card table th,
 #overdue .card table td{
-  font-size:.92rem;
-  padding:10px 8px;
+  font-size:.88rem;
+  padding:12px 10px;
   vertical-align:middle;
 }
 /* Mətn sütunları wrap etsin */
@@ -837,24 +837,33 @@ body.theme-dark .login-overlay{background:var(--sidebar-solid);}
 }
 table{width:100%;border-collapse:collapse;}
 th{
-  background:#fdfdfd;padding:16px;border-bottom:2px solid var(--border-color);
-  border-right:1px solid var(--border-color);text-align:left;font-size:.75rem;color:var(--text-muted);
+  background:var(--sidebar-solid);padding:12px 12px;border-bottom:1px solid rgba(255,255,255,.18);
+  border-right:1px solid rgba(255,255,255,.15);text-align:left;font-size:.78rem;color:#fff;
+  font-weight:800;
   text-transform:uppercase;
 }
 td{
-  padding:16px;border-bottom:1px solid var(--border-color);
-  border-right:1px solid var(--border-color);font-size:.9rem;
+  padding:12px 12px;border-bottom:1px solid var(--border-color);
+  border-right:1px solid var(--border-color);font-size:.88rem;
 }
 
 /* Sticky table headers */
-.card{overflow:auto;}
+.section.active .card{flex:1 1 auto;min-height:0;overflow:auto;}
 .card table thead th{
   position:sticky;
   top:0;
-  background:#fdfdfd;
+  background:var(--sidebar-solid);
   z-index:5;
 }
 th:last-child,td:last-child{border-right:none;width:140px;text-align:center;white-space:nowrap;}
+
+/* Non-list pages can keep natural document flow */
+#dash.section.active,
+#tools.section.active,
+#reports.section.active{
+  display:block;
+  overflow:auto;
+}
 
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;}
 .stat-card{padding:22px;border-bottom:4px solid var(--accent);}
