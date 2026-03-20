@@ -6954,9 +6954,9 @@ function renderAll() {
             <td>${escapeHtml(x.inv || "-")}</td>
             <td>${money(x.dueAmount)} AZN</td>
             <td>${escapeHtml(x.dueDate || "-")}</td>
-            <td class="${lateCellClass}">${x.daysLate}</td>
+            <td class="${lateCellClass} overdue-days-cell">${x.daysLate}</td>
             <td>${escapeHtml(x.zam || "-")}</td>
-            <td class="tbl-actions">
+            <td class="tbl-actions overdue-actions-cell">
               <button class="icon-btn overdue-info-btn" type="button" onclick="openOverdueInfo('${escapeAttr(x.saleUid)}')" title="Info"><span class="info-i-plain">i</span></button>
             </td>
           </tr>`;

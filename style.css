@@ -485,6 +485,20 @@ main{flex:1;padding:40px;}
   color:#fff;
   font-weight:800;
 }
+.overdue-days-cell{
+  text-align:center;
+  width:84px;
+  min-width:84px;
+  padding-left:6px !important;
+  padding-right:6px !important;
+}
+.overdue-actions-cell{
+  text-align:center;
+  width:72px;
+  min-width:72px;
+  padding-left:6px !important;
+  padding-right:6px !important;
+}
 .btn-mini-info{
   display:inline-flex;
   align-items:center;
