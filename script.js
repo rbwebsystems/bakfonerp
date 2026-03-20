@@ -7436,6 +7436,8 @@ function renderAll() {
 
   // accounts
   ensureAccounts();
+  const cashAccountsBlock = byId("cashAccountsBlock");
+  if (cashAccountsBlock) cashAccountsBlock.style.display = userCanSection("accounts") ? "" : "none";
   byId("tblAccounts").innerHTML = db.accounts
     .map((a, i) => {
       const bal = accountBalance(a.uid);
