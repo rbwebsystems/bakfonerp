@@ -1055,17 +1055,19 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none;
   overflow:visible;
 }
 .header-actions .search-container.search-collapsible .search-btn{
+  position:absolute;
+  right:0;
+  top:0;
   width:30px;
   height:30px;
   min-width:30px;
   margin-left:0;
   border-radius:10px;
-  position:relative;
   z-index:2;
 }
 .header-actions .search-container.search-collapsible input{
   position:absolute;
-  right:34px;
+  right:0;
   top:0;
   width:0;
   opacity:0;
@@ -1080,10 +1082,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none;
   min-width:250px;
 }
 .header-actions .search-container.search-collapsible.open input{
-  width:212px;
+  width:250px;
   opacity:1;
   height:30px;
-  padding:0 10px;
+  padding:0 40px 0 10px;
   border:1px solid var(--border-color);
   border-radius:10px;
   pointer-events:auto;
