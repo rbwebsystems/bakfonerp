@@ -540,21 +540,47 @@ main{flex:1;padding:40px;}
   line-height:1;
 }
 
-/* Overdue table: make action column truly narrow */
+/* Overdue table: cleaner compact layout without overflow */
 #overdue .card table{
-  table-layout:fixed;
   width:100%;
 }
 #overdue .card table th,
 #overdue .card table td{
+  font-size:.84rem;
+  padding:8px 6px;
+  vertical-align:middle;
+}
+/* Mətn sütunları wrap etsin */
+#overdue .card table th:nth-child(2),
+#overdue .card table td:nth-child(2),
+#overdue .card table th:nth-child(3),
+#overdue .card table td:nth-child(3),
+#overdue .card table th:nth-child(11),
+#overdue .card table td:nth-child(11){
+  white-space:normal;
   word-break:break-word;
 }
-/* Əməliyyat sütunu (12-ci sütun) */
+/* Rəqəm/tarix sütunları sıx olsun */
+#overdue .card table th:nth-child(4),
+#overdue .card table td:nth-child(4),
+#overdue .card table th:nth-child(5),
+#overdue .card table td:nth-child(5),
+#overdue .card table th:nth-child(6),
+#overdue .card table td:nth-child(6),
+#overdue .card table th:nth-child(7),
+#overdue .card table td:nth-child(7),
+#overdue .card table th:nth-child(8),
+#overdue .card table td:nth-child(8),
+#overdue .card table th:nth-child(9),
+#overdue .card table td:nth-child(9){
+  white-space:nowrap;
+}
+/* Əməliyyat sütunu dar */
 #overdue .card table th:nth-child(12),
 #overdue .card table td:nth-child(12){
-  width:44px;
-  min-width:44px;
-  max-width:44px;
+  width:36px;
+  min-width:36px;
+  max-width:36px;
   text-align:center;
   padding-left:2px;
   padding-right:2px;
