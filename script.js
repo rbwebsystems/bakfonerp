@@ -4013,6 +4013,7 @@ function saveDebtorPayment(e, customerId) {
 
 // ========= Cash =========
 function addCashOp(op, opts = {}) {
+  const actor = userDisplay(currentUser());
   const data = {
     uid: genId(db.cash, 1),
     type: op.type, // in | out
@@ -4023,6 +4024,7 @@ function addCashOp(op, opts = {}) {
     link: op.link || null,
     meta: op.meta || null,
     accountId: Number(op.accountId || 1),
+    actor: op.actor || actor || "-",
   };
   if (opts.clampToApplied && typeof opts.applied === "number") data.amount = Math.max(0, n(opts.applied));
   if (data.amount <= 0) return;
@@ -7231,7 +7233,7 @@ function renderAll() {
       const accountName = (db.accounts || []).find((a) => Number(a.uid) === Number(c.accountId || 1))?.name || `#${Number(c.accountId || 1)}`;
       let invNo = "-";
       let customer = "-";
-      let employee = "-";
+      let employee = c.actor || "-";
       let payType = "-";
 
       if (kind === "sale" || kind === "sale_payment" || kind === "return_refund") {
