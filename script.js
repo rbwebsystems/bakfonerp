@@ -7298,11 +7298,16 @@ function renderAll() {
       <td>${i + 1}</td>
       <td>${escapeHtml(invNo)}</td>
       <td>${escapeHtml(customer)}</td>
+      <td>${c.type === "in" ? "Gəlir" : "Xərc"}</td>
       <td class="${c.type === "in" ? "amt-in" : "amt-out"}">${money(c.amount)} AZN</td>
       <td>${escapeHtml(accountName)}</td>
       <td>${escapeHtml(employee)}</td>
       <td>${fmtDT(c.date)}</td>
       <td>${escapeHtml(payType)}</td>
+      <td class="tbl-actions">
+        ${userCanEdit() ? `<button class="icon-btn edit" onclick="openEditCashOp(${c.uid})" title="Redaktə"><i class="fas fa-pen"></i></button>` : ""}
+        ${userCanDelete() ? `<button class="icon-btn delete" onclick="delCashOp(${c.uid})" title="Sil"><i class="fas fa-trash"></i></button>` : ""}
+      </td>
     </tr>`;
     })
     .join("");
