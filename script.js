@@ -1892,25 +1892,38 @@ function addMonthsISO(dateISO, addMonths) {
 }
 
 function buildCreditSchedule(sale) {
-  const term = Number(sale.credit?.termMonths) || 0;
-  const total = n(sale.amount);
-  const down = n(sale.credit?.downPayment);
-  const remAfterDown = Math.max(0, total - down);
-  const monthly = term > 0 ? remAfterDown / term : 0;
+  const term = Math.max(0, Number(sale.credit?.termMonths) || 0);
+  const toCents = (v) => Math.round(Math.max(0, n(v)) * 100);
+  const fromCents = (c) => (Math.max(0, c) / 100);
 
-  // payments after down:
-  const paid = n(sale.paidTotal);
-  const paidAfterDown = Math.max(0, paid - down);
-  let paidLeft = paidAfterDown;
+  const totalC = toCents(sale.amount);
+  const downC = Math.min(totalC, toCents(sale.credit?.downPayment));
+  const remC = Math.max(0, totalC - downC);
+  const monthlyBase = term > 0 ? Math.floor(remC / term) : 0;
+  const monthlyRem = term > 0 ? (remC % term) : 0;
+
+  const paidC = toCents(sale.paidTotal);
+  const downAppliedC = Math.min(downC, paidC);
+  let paidLeftC = Math.max(0, paidC - downAppliedC);
+
   const rows = [];
   for (let i = 1; i <= term; i++) {
+    // First `monthlyRem` rows get +0.01 so total cents matches exactly.
+    const amtC = monthlyBase + (i <= monthlyRem ? 1 : 0);
     const due = addMonthsISO(sale.date, i);
-    const amt = monthly;
-    const paidThis = Math.min(amt, paidLeft);
-    paidLeft -= paidThis;
-    const st = debtStatus(amt, Math.max(0, amt - paidThis));
-    rows.push({ idx: i, due, amount: amt, paid: paidThis, remaining: Math.max(0, amt - paidThis), status: st });
+    const paidThisC = Math.min(amtC, paidLeftC);
+    paidLeftC -= paidThisC;
+    const remainingC = Math.max(0, amtC - paidThisC);
+    const amt = fromCents(amtC);
+    const paidThis = fromCents(paidThisC);
+    const remaining = fromCents(remainingC);
+    const st = debtStatus(amt, remaining);
+    rows.push({ idx: i, due, amount: amt, paid: paidThis, remaining, status: st });
   }
+
+  const down = fromCents(downC);
+  const remAfterDown = fromCents(remC);
+  const monthly = term > 0 ? (remAfterDown / term) : 0;
   return { term, down, remAfterDown, monthly, rows };
 }
 
